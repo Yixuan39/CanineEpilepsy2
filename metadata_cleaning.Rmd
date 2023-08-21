@@ -1,0 +1,22 @@
+---
+title: "metadata cleaning"
+author: "Yixuan Yang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+meta_data <- readxl::read_xlsx('epilepsy_mapping.xlsx') %>% arrange(str_rank(SampleID, numeric = T))
+meta_data <- meta_data[1:118,]
+meta_data <- meta_data %>% arrange(str_rank(SampleID, numeric = T))
+meta_data
+```
+

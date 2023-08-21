@@ -1,0 +1,186 @@
+---
+title: "re-generate_results"
+author: "Yixuan Yang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+library(data.table)
+library(dada2)
+theme_set(theme_bw())
+path.rds <- "RDS/"
+st <- readRDS(file.path(path.rds, "st.rds"))
+tax <- readRDS(file.path(path.rds, "taxp.rds"))
+```
+
+```{r}
+fnMeta <- "epilepsy_metadata.tsv"
+df <- read.table(fnMeta, header=TRUE, sep="\t", stringsAsFactors = FALSE)
+df$Category <- factor(df$Category)
+df$Household <- factor(df$Household)
+rownames(df) <- df$SampleID
+st <- readRDS(file.path(path.rds, "st.rds"))
+tax <- readRDS(file.path(path.rds, "taxp.rds"))
+if(!identical(colnames(st), rownames(tax))) stop("st/tax mismatch.")
+# Fix sample names for st, currently fastq filename rather than shroter sample name
+rownames(st) <- sapply(strsplit(rownames(st), "_"), `[`, 1)
+if(!all(rownames(st) %in% rownames(df))) stop("st/df mismatch.")
+# Coordinate df with st
+df <- df[rownames(st),]
+if(!identical(rownames(df), rownames(st))) stop("st/df mismatch (2).")
+# Make frequency table, i.e. normalized to proportions
+ft <- sweep(st, 1, rowSums(st), "/")
+dfi <- df
+sti <- st
+fti <- ft
+taxi <- tax
+sq <- colnames(st)
+keep.samples <- rownames(sti)[rowSums(sti) > 100]
+st <- sti[keep.samples,] # st for sequence table
+ft <- fti[keep.samples,] # ft for full taxa
+samdf <- dfi[keep.samples,]
+if(!identical(rownames(samdf), rownames(st))) stop("st/samdf mismatch (3).")
+```
+
+Sample data are proceed and denoised in `process.Rmd`
+
+# look at species distribution
+
+```{r}
+taxdf <- data.frame(tax)
+(freq.table <- (table(taxdf$Genus) %>% sort(decreasing = T))[1:50] %>%
+    data.frame() %>%
+    setNames(c('Genus', 'Freq')))
+
+species.list <- list()
+for (genus in freq.table$Genus) {
+  species.list[[genus]] <- filter(taxdf, Genus == genus)$Species 
+}
+# (species.list)
+```
+
+According to the prior information, we will first focus on `Helicobacter`
+
+```{r}
+species.list$Helicobacter
+```
+
+From the ASVs we can see that 4 out of 8 have been assigned to a species, and three of them are same species
+
+```{r}
+# get sequence of helicobacter
+sq.helico <- getSequences(tax)[which(tax[,6] %in% 'Helicobacter')]
+outer(sq.helico, sq.helico, nwhamming, vec = T)
+```
+
+These sequences are similar from each other. We should blast them over the nt database
+
+```{r}
+dada2:::pfasta(sq.helico)
+```
+
+Below is the result from BLAST web interface searching our data against the nt database
+
+```{r}
+helico.nt <- c('canis',
+               'canicola/cinaedi/bills',
+               'canis',
+               'canis',
+               'canis',
+               'canicola/cinaedi/bills',
+               'canis',
+               'canicola/cinaedi/bills')
+ft.helico <- ft[,sq.helico]
+```
+
+We can see most sequences are from canis, the rest could from homologous genes of canicola/cinaedi/bills.
+
+Here we look at the correlation between the frequency of each strain that is classified as canis to see if there's intragenomic variant.
+
+```{r}
+helico.canis.prop <- ft[,sq.helico[c(1,3,4,5,7)]]
+colnames(helico.canis.prop) <- str_c('helico', c(1,3,4,5,7)) 
+cor(helico.canis.prop)
+helico.other.prop <- ft[,sq.helico[c(2,6,8)]]
+colnames(helico.other.prop) <- str_c('helico', c(2,6,8)) 
+samdf <- samdf %>% cbind(canis.prop = rowSums(helico.canis.prop)) %>% cbind(other.prop = rowSums(helico.other.prop))
+```
+
+
+# analyze
+
+Here we can have a paired t test to see if there's a difference of helicobactor proportion between the healthy and epilepsy group (household 10 is removed since this is a paired t test). We first test for the `canis` strain...
+
+```{r}
+#samdf <- samdf %>% filter(Household!=10)
+epilepsy.dog <- filter(samdf, Condition == 'Epilepsy')
+healthy.dog <- filter(samdf, Condition == 'Healthy' & Household != 10)
+#theta0 <- epilepsy.dog$canis.prop - healthy.dog$canis.prop
+t.test(epilepsy.dog$canis.prop, healthy.dog$canis.prop, paired = TRUE)
+ggplot(samdf) +
+  geom_boxplot(aes(x=Condition, y=canis.prop))
+```
+
+We get p-value=0.1093. Although this does not meet the conventional significant level, it is still a considerable variable since our limited sample size.
+
+We can also look at the effect of anicola/cinaedi/bills strain.
+
+```{r}
+t.test(epilepsy.dog$other.prop, healthy.dog$other.prop, paired = TRUE)
+ggplot(samdf) +
+  geom_boxplot(aes(x=Condition, y=other.prop))
+```
+
+There's not a significant difference.
+
+```{r}
+t.test(epilepsy.dog$Age, healthy.dog$Age, paired = TRUE)
+ggplot(samdf) +
+  geom_boxplot(aes(x=Condition, y=Age))
+```
+
+Here we can see that age is also an important factor that related to epilepsy
+
+```{r}
+ggplot(samdf) +
+  geom_point(aes(x=Age, y=canis.prop, color=Condition)) +facet_wrap(~Household, scales = 'free_y') 
+```
+
+Check if there's collinearity between age and helicobactor canis. I wonder if older dog will have more helicobactor canis.
+
+```{r}
+plot(epilepsy.dog$Age, epilepsy.dog$canis.prop)
+plot(healthy.dog$Age, healthy.dog$canis.prop)
+ggplot(samdf) +
+  geom_text(aes(x=Age, y=canis.prop, label=Household)) +facet_wrap(~Condition, scales = 'fixed') 
+```
+
+```{r}
+samdf$Condition = factor(samdf$Condition)
+model.intercept <- glm(Condition~1, data = samdf, family = 'binomial')
+model.all <- glm(Condition~Age*canis.prop, data = samdf, family = 'binomial')
+backward <- step(model.all, direction='backward', scope=formula(model.intercept), trace=0)
+summary(backward)
+```
+
+
+```{r}
+pv <- c()
+for (genus in freq.table$Genus) {
+  seq <- getSequences(tax)[which(tax[,6] %in% genus)]
+  prop <- ft[,seq] %>% rowSums()
+  df <- cbind(samdf, prop) %>% filter(Household != 10)
+  pv <- pv %>% append(t.test(prop~Condition, data = df, paired = TRUE)$p.value)
+}
+pvalues <- freq.table %>% cbind(p.value = pv)
+
+pvalues %>% filter(p.value <= 0.1)
+```
+
+
+```{r}
+sessionInfo()
+```
+
