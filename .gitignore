@@ -70,3 +70,11 @@ rsconnect/
 *.csv
 *.tmp*
 
+# for this new repo
+
+*.txt
+*.qza
+*.qzv
+*.sh
+
+
