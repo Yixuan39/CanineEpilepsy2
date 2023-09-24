@@ -1,0 +1,22 @@
+---
+title: "abundance plots"
+author: "Yixuan Yang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(here)
+library(phyloseq)
+library(tidyverse)
+```
+
+
+```{r}
+ps <- read_rds(here('Rdata','ps.rds'))
+```
+
+```{r}
+tax_table(ps)
+```
+

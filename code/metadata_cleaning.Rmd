@@ -1,0 +1,170 @@
+---
+title: "metadata cleaning"
+author: "Yixuan Yang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE}
+rm(list = ls())
+library(tidyverse)
+```
+
+Here we start to explore the meta data form. 
+
+```{r}
+meta_data <- readxl::read_xlsx('../data/epilepsy_mapping.xlsx') %>% arrange(str_rank(SampleID2, numeric = T))
+meta_data <- meta_data[1:118,] # we had 124 obs, the last 6 obs are positive/negative control.
+meta_data <- meta_data %>% arrange(str_rank(SampleID, numeric = T))
+meta_data
+```
+
+Now, before we combine the meta data and the `dada2` results, we first take a look at the matching of sample ID. In the data, we see there are `SampleID` and `SampleID2`. We need to figure out which one is matching to the ID of the sequence files.
+
+```{r}
+# in this section, we are loading in the file names of each sequence file.
+data.folder <- '~/Projects/Microbiome/CanineEpilepsy2/221024_UNC2X_KKYJ5-KKYGJ-NETTI-in/221024_UNC2X_KKYJ5-KKYGJ-NETTI'
+fn.R1 <- list.files(data.folder, pattern = 'R1') %>% str_remove('_L001_R1_001.fastq.gz')
+fn.R2 <- list.files(data.folder, pattern = 'R2') %>% str_remove('_L001_R2_001.fastq.gz')
+# here we double check if there's any strange file names.
+sum(fn.R1 != fn.R2)
+```
+
+```{r}
+# now split file names into ids and sequences
+fn <- fn.R1 %>% str_split_fixed('_|-',3) %>% as.data.frame()
+fn[,1] <- fn[,1] %>% str_remove('Netti')
+sum(as.numeric(fn[,1]) == 1:118) # there's no strange number in file name
+```
+
+Here, just by eye browsing, we can see if we arrange the metadata by `SampleID`, most of the i5 and i7 sequence does not match with that in file name.
+
+```{r}
+which(meta_data[,c(4,6)] != fn[,c(2,3)])
+```
+
+Moreover, we see one 'Netti_J' and two 'Netti_J23', but no 'Netti_J8' and 'Netti_J112', while they exist in the sequence file folder. There are also Netti_J 119, 120, 121 in `SampleID` and no #94,95,96, while they exist in file name. So `SampleID` is unlikely the sample thing in file name.
+
+Here we start to match file name with sample id 2
+
+```{r}
+meta_data <- meta_data %>% arrange(str_rank(SampleID2, numeric = T))
+which(meta_data$SampleID2 %>% as.numeric() %>% table() > 1)
+```
+
+The result shows that sample 104 appears more than 1 times. 103 is its index. From observation, sample 51 is missing.
+
+```{r}
+meta_data[c(103,104),]
+fn[104,]
+```
+
+Both sample id 104 have i7 and i5 sequence matching with that in file name. Bag, Tube and Dog Name are also same. However, the `Household` and `Group` are different. To keep exploring data, here we exclude the problematic data (sample 51 and 104 in both metadata and dada2 results)
+
+```{r}
+# sample 51 is removed when process the data (in script epi2.R)
+meta_data_clean <- meta_data[-c(103,104),]
+fn_clean <- fn[-c(51,104),]
+which(meta_data_clean[,c(4,6)] != fn_clean[,c(2,3)]) # are all sequence match? print index if there's a difference.
+```
+
+Now, we check if all data are paired.
+
+```{r}
+meta_data_clean$Household %>% as.numeric() %>% table()
+which(meta_data_clean$Household %>% as.numeric() %>% table() %>% unname() != 2)
+```
+
+Here, we see that household 9,17, 24, 26, 33 are not paired. Househould33 only have one data because we miss sample 51, which should also be in this household. According to the prior information, we know that household 17 and 26 contribute 4 dogs. household 9 and 24 contribute duplicated samples. Consider to remove the duplicate data after checking and compare their quality.
+
+# Summary
+
+With sample ID 51 and 104 removed, the meta data and data2 results could be matched by `SampleID2`. Other data should be considered removed after deeper analysis.
+
+sample 52 should be removed if paired t test is needed.
+
+sample 63,64, 113,115, 117,118 could be removed since they are duplicated samples. We can check their quality.
+
+sample 105,106,107,108 are duplicated sample of sample 104. Since 104 is excluded, we can keep one of the four duplicates.
+
+# Quality Assurance
+
+```{r}
+st <- readRDS('../Rdata/st.rds')
+```
+
+
+Do some QA on the sequencing libraries:
+
+```{r}
+plot(rowSums(st), log="y")
+which(rowSums(st) < 2e+3)
+which(rowSums(st) < 100)
+```
+
+All of the data has more than 100 reads, but sample 40,80 and 108 have relateively low # of reads.
+
+sample 106,107,108 are duplicates of sample 103. Let's look at their quality. 
+
+```{r}
+rowSums(st)[c(103,106,107,108)]
+```
+
+Here we can keep sample 103 since it has more reads.
+
+sample 63,113,115 are duplicates of sample 114. sample 64,117,118 are duplicates of sample 116.
+
+```{r}
+rowSums(st)[c(63,113,114,115)] %>% sort()
+rowSums(st)[c(64,116,117,118)] %>% sort()
+```
+
+Here we can keep the sample with most reads (sample 64 and 114)
+
+# summary
+
+For now we can remove sample 106,107,108,113,115,63,116,117,118.
+
+```{r}
+# remove sample 51 and 104 in st
+st.new <- st[-c(51,104,106,107,108,113,115,63,116,117,118),]
+# remove duplicates
+meta_data.new <- meta_data[-c(103,104),] %>% filter(!(SampleID2 %in% as.character(c(106,107,108,113,115,63,116,117,118))))
+if(!identical(rownames(st.new) %>% str_remove('Netti') %>% as.numeric(),
+              meta_data.new$SampleID2 %>% as.numeric())) stop('sample id mismatch')
+
+```
+
+```{r}
+which(meta_data.new$Household == 17)
+meta_data.new[c(105,106),'Household'] = c('17_2', '17_2')
+which(meta_data.new$Household == 26)
+meta_data.new[c(38,37),]
+meta_data.new[c(38,37),'Household'] = c('26_2', '26_2')
+```
+
+```{r}
+which(meta_data.new$Household == 33)
+st.new <- st.new[-51,]
+meta_data.new <- meta_data.new[-51,]
+```
+
+
+
+```{r}
+saveRDS(as.data.frame(meta_data.new), '../Rdata/metadata.rds')
+saveRDS(st.new, '../Rdata/st_new.rds')
+```
+
+
+```{r}
+sessionInfo()
+```
+
+
+
+

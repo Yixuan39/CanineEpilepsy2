@@ -1,0 +1,79 @@
+---
+title: "DA-analysis"
+author: "Yixuan Yang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE}
+rm(list = ls())
+library(here)
+library(phyloseq)
+library(tidyverse)
+library(ggbeeswarm)
+library(ggthemes)
+library(factoextra)
+library(cowplot)
+library(ALDEx2)
+```
+
+```{r}
+ps <- readRDS(here('Rdata','ps.rds'))
+```
+
+```{r}
+filt_fun <- function (x, min_reads = 100, min_samples = 5) {
+    (sum(x) > min_reads) & (sum(x > 0) > min_samples) # what does this line mean?
+}
+ps <- ps %>%
+    filter_taxa(filt_fun, prune = TRUE)
+```
+
+```{r}
+set.seed(256)
+x <- aldex.clr(otu_table(ps) %>% t, 
+    sample_data(ps)$Group, mc.samples = 128, denom = "all", useMC = TRUE)
+x.tt <- aldex.ttest(x, paired.test = T)
+x.effect <- aldex.effect(x, CI = T, useMC = TRUE, paired.test = T)
+if(!identical(rownames(x.effect), rownames(x.effect)))stop('rownames not match')
+aldex_out <- data.frame(x.tt, x.effect)
+```
+
+```{r}
+cutoff = 0.1
+aldex.plot(aldex_out, type = "MW", test = "wilcox", cutoff = cutoff)
+```
+
+```{r}
+top_hits <- aldex_out %>%
+    arrange(desc(abs(effect)))
+top_hits <- top_hits %>% bind_cols(tax_table(ps)[rownames(top_hits)])
+```
+
+
+# test for drug
+
+```{r}
+set.seed(2023)
+x <- aldex.clr(otu_table(ps) %>% t, 
+    sample_data(ps)$`Pheno or drug naive`, useMC = TRUE)
+x.tt <- aldex.ttest(x, paired.test = F)
+x.effect <- aldex.effect(x, CI = T, useMC = TRUE, paired.test = F)
+if(!identical(rownames(x.effect), rownames(x.effect)))stop('rownames not match')
+aldex_out <- data.frame(x.tt, x.effect)
+```
+
+```{r}
+cutoff = 0.1
+aldex.plot(aldex_out, type = "MW", test = "wilcox", cutoff = cutoff)
+```
+
+```{r}
+top_hits <- aldex_out %>%
+    arrange(desc(abs(effect)))
+top_hits <- top_hits %>% bind_cols(tax_table(ps)[rownames(top_hits)])
+```
