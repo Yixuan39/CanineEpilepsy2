@@ -2,7 +2,7 @@
 
 # Data
 
-Data cleaning: [metadata_cleaning.html](knit_html/metadata_cleaning.html) 
+Meta data cleaning: [metadata_cleaning.html](http://htmlpreview.github.io/?knit_html/metadata_cleaning.html) 
 
 # Analysis
 
