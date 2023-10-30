@@ -6,17 +6,82 @@ output: html_document
 ---
 
 ```{r}
+rm(list = ls())
 library(here)
 library(phyloseq)
 library(tidyverse)
+theme_set(theme_minimal())
 ```
 
 
 ```{r}
-ps <- read_rds(here('Rdata','ps.rds'))
+ps <- read_rds(here('Rdata','following_study','ps.rds'))
+ps.pilot <- read_rds(here('Rdata','pilot_study','ps.rds'))
 ```
 
 ```{r}
-tax_table(ps)
+filt_fun <- function (x, min_reads = 100, min_samples = 5) {
+    (sum(x) > min_reads) & (sum(x > 0) > min_samples) 
+}
+ps.melt <- ps %>%
+    filter_taxa(filt_fun, prune = TRUE) %>% 
+    psmelt() %>% 
+    select(Sample, Abundance, Phylum, Genus) %>% 
+    cbind(study = 'following')
+ps.pilot.melt <- ps.pilot %>%
+    filter_taxa(filt_fun, prune = TRUE) %>% 
+    psmelt() %>% 
+    select(Sample, Abundance, Phylum, Genus) %>% 
+    cbind(study = 'pilot')
+
 ```
+
+Here we draw the abundance plot by Phylum
+
+```{r}
+abundance.data <- bind_rows(ps.pilot.melt, ps.melt) 
+abundance.data$study <- factor(abundance.data$study, levels = c('pilot', 'following'))
+
+ggplot(data = abundance.data) + 
+    geom_col(aes(Sample, Abundance, fill = Phylum),position = "fill", width = 1) +
+    theme(axis.text.x=element_blank(),
+          axis.ticks.x=element_blank())  +
+  facet_grid(. ~ study, scales="free_x", space="free_x")
+ggsave(here('figures','abundance_phylum.png'), width = 6, height = 4)
+```
+
+Here we start to look at the relative abundance by Genus in each of Actinobacteriota, Bacteroidota, Fusobacteriota, and Proteobacteria
+
+```{r}
+ggplot(data = abundance.data %>% filter(Phylum == 'Actinobacteriota')) + 
+    geom_col(aes(Sample, Abundance, fill = Genus),position = "fill", width = 1) +
+    theme(axis.text.x=element_blank(),
+          axis.ticks.x=element_blank())  +
+  facet_grid(. ~ study, scales="free_x", space="free_x")
+
+ggplot(data = abundance.data %>% filter(Phylum == 'Bacteroidota')) + 
+    geom_col(aes(Sample, Abundance, fill = Genus),position = "fill", width = 1) +
+    theme(axis.text.x=element_blank(),
+          axis.ticks.x=element_blank())  +
+  facet_grid(. ~ study, scales="free_x", space="free_x")
+
+ggplot(data = abundance.data %>% filter(Phylum == 'Fusobacteriota')) + 
+    geom_col(aes(Sample, Abundance, fill = Genus),position = "fill", width = 1) +
+    theme(axis.text.x=element_blank(),
+          axis.ticks.x=element_blank())  +
+  facet_grid(. ~ study, scales="free_x", space="free_x")
+
+ggplot(data = abundance.data %>% filter(Phylum == 'Proteobacteria')) + 
+    geom_col(aes(Sample, Abundance, fill = Genus),position = "fill", width = 1) +
+    theme(axis.text.x=element_blank(),
+          axis.ticks.x=element_blank())  +
+  facet_grid(. ~ study, scales="free_x", space="free_x")
+```
+
+```{r}
+sessionInfo()
+```
+
+
+
 

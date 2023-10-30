@@ -10,70 +10,193 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r message=FALSE}
-rm(list = ls())
+set.seed(2023)
 library(here)
 library(phyloseq)
 library(tidyverse)
-library(ggbeeswarm)
-library(ggthemes)
-library(factoextra)
-library(cowplot)
 library(ALDEx2)
-```
-
-```{r}
-ps <- readRDS(here('Rdata','ps.rds'))
+library(rstatix)
+library(compositions)
+theme_set(theme_minimal())
 ```
 
 ```{r}
 filt_fun <- function (x, min_reads = 100, min_samples = 5) {
-    (sum(x) > min_reads) & (sum(x > 0) > min_samples) # what does this line mean?
+    (sum(x) > min_reads) & (sum(x > 0) > min_samples)
 }
-ps <- ps %>%
-    filter_taxa(filt_fun, prune = TRUE)
+ps <- readRDS(here('Rdata','following_study','ps.rds')) %>% 
+    filter_taxa(filt_fun, prune = TRUE) 
+# convert data into proportion
+ps.prop <- ps %>% transform_sample_counts(function(x) x / sum(x) )
+
+sam <- sample_data(ps) %>% data.frame() %>%
+    rownames_to_column('Sample') %>% as_tibble()
+tax <- tax_table(ps) %>% data.frame() %>%
+    rownames_to_column('Taxon') %>% as_tibble
 ```
 
+# Does the microbiome different in health and epilepsy group?
+
+## ALDEx2 analysis
+
+```{r message=FALSE}
+aldex.tt <- aldex(otu_table(ps) %>% t, sam$Group,
+                  test="t", verbose=FALSE, paired.test=TRUE,
+                  effect=TRUE , mc.samples = 128, denom = "all", useMC = TRUE) %>%
+    as_tibble(rownames = "Taxon")
+aldex.plot(aldex.tt, type = "MW", test = "wilcox")
+sig <- aldex.tt$we.ep < 0.1 # p-value of welch's t test 
+points(aldex.tt$diff.win[sig],aldex.tt$diff.btw[sig], col="blue")
+aldex.tt%>%
+    left_join(tax, by = "Taxon") %>%
+    filter(we.ep < 0.1) %>% 
+    dplyr::select(Taxon, effect, starts_with("w"), Phylum, Genus)
+```
+
+```{r include=FALSE}
+top_hits <- aldex.tt %>%
+    left_join(tax, by = "Taxon") %>%
+    group_by(sign(effect)) %>%
+    top_n(15, abs(effect)) %>%
+    ungroup %>%
+    left_join(tax) %>%
+    dplyr::select(Taxon, effect, starts_with("w"), Phylum, Genus) %>%
+    arrange(-sign(effect), -abs(effect))
+top_hits 
+```
+
+Are we too conservative? Here we conduct a t-test not by ALDEx2. In this case, we convert our data into proportion.
+
 ```{r}
-set.seed(256)
+# ttest
+otu.prop.group <- data.frame(Group = factor(sam$Group),Household = sam$Household, otu_table(ps.prop)) %>% 
+    gather(key = 'Taxon', value = 'proportion', starts_with('ASV')) %>% 
+    group_by(Taxon)
+
+ptt <- otu.prop.group %>% 
+    pairwise_t_test(
+        proportion ~ Group, paired = TRUE,
+        p.adjust.method = "BH"
+    ) %>%
+    left_join(tax, by = "Taxon") %>% 
+    select(-.y.,-df, -statistic, -Kingdom, -Class, -Order, -Family, -Species) %>%
+    filter(p.adj.signif != 'ns') %>% 
+    # filter(p <= 0.1) %>% 
+     arrange(str_rank(Taxon, numeric = T))
+ptt
+
+otu.prop.group %>%
+    left_join(tax, by = "Taxon") %>% 
+    filter(Taxon %in% ptt$Taxon) %>% 
+    ggplot(aes(proportion,Group, color = Group)) +
+    geom_boxplot() +
+    facet_grid(Taxon+Genus~.) +
+    theme(strip.text.y = element_text(angle = 0))
+```
+
+If we look at them in Genus level, not in ASV level?
+
+```{r}
+ps.genus <- tax_glom(ps, 'Genus')
+aldex.tt <- aldex(otu_table(ps.genus) %>% t, sam$Group,
+                  test="t", verbose=FALSE, paired.test=TRUE,
+                  effect=TRUE , mc.samples = 128, denom = "all", useMC = TRUE) %>%
+    as_tibble(rownames = "Taxon")
+aldex.plot(aldex.tt, type = "MW", test = "wilcox")
+sig <- aldex.tt$we.ep < 0.1 # p-value of welch's t test 
+points(aldex.tt$diff.win[sig],aldex.tt$diff.btw[sig], col="blue")
+aldex.tt%>%
+    left_join(tax, by = "Taxon") %>%
+    filter(we.ep < 0.2) %>% 
+    dplyr::select(Taxon, effect, starts_with("w"), Phylum, Genus)
+```
+
+# Lactobacillus and Helicobacter
+
+Lactobacillus and helicobacter are two genus that we are interested in. From the results above, we didn't find them to be significant. Here we want to look at how their data are distributed.
+
+```{r}
+ps.interest <- subset_taxa(ps.prop, Genus %in% c('Lactobacillus', 'Helicobacter'))
+otu.interest <- otu_table(ps.interest)
+genus.interest <- data.frame(tax_table(ps.interest))$Genus
+otu.prop.interest <- data.frame(Group = factor(sam$Group),
+                                Household = sam$Household,
+                                otu.interest) %>% 
+    gather(key = 'Taxon', value = 'proportion', starts_with('ASV')) %>% 
+    mutate(TH = str_c(Taxon, Household, sep = '_')) %>% 
+    mutate(Genus = tax_table(ps.interest)[Taxon, 'Genus'])
+
+ggplot(data = otu.prop.interest,
+       aes(x = Group, y = proportion, group = TH, color = Household)) +
+    geom_point() +
+    geom_line() +
+    facet_wrap(~Genus)
+```
+
+Here we see both genus have small difference
+
+```{r}
+ggplot(data = otu.prop.interest) +
+    geom_histogram(aes(proportion)) +
+    facet_wrap(~Genus, scales = 'free_y')
+```
+
+
+# Effect of Drug
+
+```{r message=FALSE}
+aldex.tt <- aldex(otu_table(ps) %>% t, sam$Pheno.or.drug.naive,
+                  test="t", verbose=FALSE, paired.test=FALSE,
+                  effect=TRUE , mc.samples = 128, denom = "all", useMC = TRUE) %>%
+    as_tibble(rownames = "Taxon")
+aldex.plot(aldex.tt, type = "MW", test = "wilcox")
+sig <- aldex.tt$we.ep < 0.1 # p-value of welch's t test 
+points(aldex.tt$diff.win[sig],aldex.tt$diff.btw[sig], col="blue")
+aldex.tt%>%
+    left_join(tax, by = "Taxon") %>%
+    filter(we.ep < 0.1) %>% 
+    dplyr::select(Taxon, effect, starts_with("w"), Phylum, Genus)
+```
+
+```{r message=FALSE}
+mm <- model.matrix( ~ Group + Pheno.or.drug.naive, sam)
 x <- aldex.clr(otu_table(ps) %>% t, 
-    sample_data(ps)$Group, mc.samples = 128, denom = "all", useMC = TRUE)
-x.tt <- aldex.ttest(x, paired.test = T)
-x.effect <- aldex.effect(x, CI = T, useMC = TRUE, paired.test = T)
-if(!identical(rownames(x.effect), rownames(x.effect)))stop('rownames not match')
-aldex_out <- data.frame(x.tt, x.effect)
+    mm, mc.samples = 128, denom = "all", useMC = TRUE)
+glm.test <- aldex.glm(x, mm)
+glm.effect <- aldex.glm.effect(x, useMC = TRUE)
 ```
 
 ```{r}
-cutoff = 0.1
-aldex.plot(aldex_out, type = "MW", test = "wilcox", cutoff = cutoff)
+sig <- glm.test$`Pheno.or.drug.naivepheno:pval` < 0.1
+aldex.plot(glm.effect[["Pheno.or.drug.naivepheno"]], test="effect")
+points(glm.effect[["Pheno.or.drug.naivepheno"]]$diff.win[sig],
+    glm.effect[["Pheno.or.drug.naivepheno"]]$diff.btw[sig], col="blue")
+glm.test[sig,] %>%
+    rownames_to_column('Taxon') %>%
+    as_tibble() %>%
+    left_join(tax, by = 'Taxon') %>% 
+    dplyr::select('Taxon',ends_with('pval'), 'Phylum', 'Genus')
 ```
 
+# Pilot study data
+
 ```{r}
-top_hits <- aldex_out %>%
-    arrange(desc(abs(effect)))
-top_hits <- top_hits %>% bind_cols(tax_table(ps)[rownames(top_hits)])
+path <- here('Rdata','pilot_study')
+ps.pilot <- readRDS(here(path,'ps.rds')) %>% filter_taxa(filt_fun, prune = TRUE)
+tax <- tax_table(ps.pilot) %>% data.frame() %>% rownames_to_column('Taxon') %>% as_tibble
 ```
 
 
-# test for drug
-
-```{r}
-set.seed(2023)
-x <- aldex.clr(otu_table(ps) %>% t, 
-    sample_data(ps)$`Pheno or drug naive`, useMC = TRUE)
-x.tt <- aldex.ttest(x, paired.test = F)
-x.effect <- aldex.effect(x, CI = T, useMC = TRUE, paired.test = F)
-if(!identical(rownames(x.effect), rownames(x.effect)))stop('rownames not match')
-aldex_out <- data.frame(x.tt, x.effect)
-```
-
-```{r}
-cutoff = 0.1
-aldex.plot(aldex_out, type = "MW", test = "wilcox", cutoff = cutoff)
-```
-
-```{r}
-top_hits <- aldex_out %>%
-    arrange(desc(abs(effect)))
-top_hits <- top_hits %>% bind_cols(tax_table(ps)[rownames(top_hits)])
+```{r message=FALSE}
+aldex.tt <- aldex(otu_table(ps.pilot) %>% t, sample_data(ps.pilot)$Group,
+                  test="t", verbose=FALSE, paired.test=TRUE,
+                  effect=TRUE , mc.samples = 128, denom = "all", useMC = TRUE) %>%
+    as_tibble(rownames = "Taxon")
+aldex.plot(aldex.tt, type = "MW", test = "wilcox")
+sig <- aldex.tt$we.ep < 0.2 # p-value of welch's t test 
+points(aldex.tt$diff.win[sig],aldex.tt$diff.btw[sig], col="blue")
+aldex.tt%>%
+    left_join(tax, by = "Taxon") %>%
+    filter(we.ep < 0.2) %>% 
+    dplyr::select(Taxon, effect, starts_with("w"), Phylum, Genus)
 ```

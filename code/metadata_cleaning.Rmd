@@ -12,12 +12,13 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r message=FALSE}
 rm(list = ls())
 library(tidyverse)
+library(here)
 ```
 
 Here we start to explore the meta data form. 
 
 ```{r}
-meta_data <- readxl::read_xlsx('../data/epilepsy_mapping.xlsx') %>% arrange(str_rank(SampleID2, numeric = T))
+meta_data <- readxl::read_xlsx(here('data/epilepsy_mapping.xlsx')) %>% arrange(str_rank(SampleID2, numeric = T))
 meta_data <- meta_data[1:118,] # we had 124 obs, the last 6 obs are positive/negative control.
 meta_data <- meta_data %>% arrange(str_rank(SampleID, numeric = T))
 meta_data
@@ -94,7 +95,7 @@ sample 105,106,107,108 are duplicated sample of sample 104. Since 104 is exclude
 # Quality Assurance
 
 ```{r}
-st <- readRDS('../Rdata/st.rds')
+st <- readRDS(here('Rdata/following_study/st.rds'))
 ```
 
 
@@ -156,8 +157,8 @@ meta_data.new <- meta_data.new[-51,]
 
 
 ```{r}
-saveRDS(as.data.frame(meta_data.new), '../Rdata/metadata.rds')
-saveRDS(st.new, '../Rdata/st_new.rds')
+saveRDS(as.data.frame(meta_data.new), here('Rdata/following_study/metadata.rds'))
+saveRDS(st.new, here('Rdata/following_study/st_new.rds'))
 ```
 
 
