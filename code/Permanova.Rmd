@@ -53,13 +53,23 @@ p.wuf + ggtitle("WUF - MDS")
 plot.ord(psord, ord.wuf.nmds) + ggtitle("WUF - NMDS")
 ```
 
-```{r}
+```{r include=FALSE}
 ds <- phyloseq::distance(psord, 'unifrac') 
-sam <- sample_data(psord)
+sam <- sample_data(psord) %>% data.frame()
 sam.dic <- hash::hash(rownames(sam), sam$Household)
-ds.m = as.matrix(ds) %>% 
-    melt() %>% as.data.frame() 
-# sam.dic[ds.m$Var1]
+ds.m = as.matrix(ds) %>%
+    melt() %>% 
+    mutate(Var1 = str_remove(Var1,'Netti')) %>% 
+    mutate(Var2 = str_remove(Var2,'Netti')) %>% 
+    mutate_if(is.character,as.numeric)
+ds.m
+dog.dist <- c()
+for (i in seq(1,106,by = 2)) {
+    data <- filter(ds.m, Var2 == i & Var1 != i)
+    avg <- mean(data$value)
+    pair <- (filter(data, Var1 == i+1))$value
+    dog.dist <- dog.dist %>% rbind(c(pair, avg))
+}
 ```
 
 
