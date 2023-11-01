@@ -65,6 +65,8 @@ top_hits <- aldex.tt %>%
 top_hits 
 ```
 
+## Pairwise t-test
+
 Are we too conservative? Here we conduct a t-test not by ALDEx2. In this case, we convert our data into proportion.
 
 ```{r}
@@ -94,9 +96,11 @@ otu.prop.group %>%
     theme(strip.text.y = element_text(angle = 0))
 ```
 
+## Genus level
+
 If we look at them in Genus level, not in ASV level?
 
-```{r}
+```{r message=FALSE}
 ps.genus <- tax_glom(ps, 'Genus')
 aldex.tt <- aldex(otu_table(ps.genus) %>% t, sam$Group,
                   test="t", verbose=FALSE, paired.test=TRUE,
@@ -115,7 +119,7 @@ aldex.tt%>%
 
 Lactobacillus and helicobacter are two genus that we are interested in. From the results above, we didn't find them to be significant. Here we want to look at how their data are distributed.
 
-```{r}
+```{r message=FALSE}
 ps.interest <- subset_taxa(ps.prop, Genus %in% c('Lactobacillus', 'Helicobacter'))
 otu.interest <- otu_table(ps.interest)
 genus.interest <- data.frame(tax_table(ps.interest))$Genus
@@ -130,12 +134,12 @@ ggplot(data = otu.prop.interest,
        aes(x = Group, y = proportion, group = TH, color = Household)) +
     geom_point() +
     geom_line() +
-    facet_wrap(~Genus)
+    facet_wrap(~Genus, scales = 'free_y')
 ```
 
 Here we see both genus have small difference
 
-```{r}
+```{r message=FALSE}
 ggplot(data = otu.prop.interest) +
     geom_histogram(aes(proportion)) +
     facet_wrap(~Genus, scales = 'free_y')
