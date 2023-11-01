@@ -2,7 +2,7 @@
 
 # Data
 
-Data cleaning: [metadata_cleaning.html](https://github.com/Yixuan39/CanineEpilepsy2/knit_html/metadata_cleaning.html) 
+Data cleaning: [metadata_cleaning.html](https://yixuan39.github.io/CanineEpilepsy2/knit_html/metadata_cleaning.html) 
 
 Store data in `phyloseq`:
 
