@@ -12,16 +12,28 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r message=FALSE}
 rm(list = ls())
 library(tidyverse)
+library(readxl)
 library(here)
 ```
 
 Here we start to explore the meta data form. 
 
 ```{r}
-meta_data <- readxl::read_xlsx(here('data/epilepsy_mapping.xlsx')) %>% arrange(str_rank(SampleID2, numeric = T))
-meta_data <- meta_data[1:118,] # we had 124 obs, the last 6 obs are positive/negative control.
-meta_data <- meta_data %>% arrange(str_rank(SampleID, numeric = T))
-meta_data
+file <- 'Epilepsy study mapping file with patient info updated 11.9.2023 JN.xlsx'
+meta_data <- read_excel(here('data',file), 
+                        n_max = 118) %>%
+    arrange(str_rank(SampleID2, numeric = T))
+# the sample id2 column was in float, we we change it to integer
+str(meta_data)
+meta_data$Household <- meta_data$Household %>% 
+    as.character()
+meta_data$`Age (months)` <- meta_data$`Age (months)` %>%
+    str_remove('\\.0') %>% 
+    as.numeric()
+meta_data$`Zip Code` <- meta_data$`Zip Code` %>%
+    str_remove('\\.0') %>%
+    str_replace('O','0')
+meta_data <- meta_data %>% select(-COMMENTS)
 ```
 
 Now, before we combine the meta data and the `dada2` results, we first take a look at the matching of sample ID. In the data, we see there are `SampleID` and `SampleID2`. We need to figure out which one is matching to the ID of the sequence files.
@@ -42,18 +54,13 @@ fn[,1] <- fn[,1] %>% str_remove('Netti')
 sum(as.numeric(fn[,1]) == 1:118) # there's no strange number in file name
 ```
 
-Here, just by eye browsing, we can see if we arrange the metadata by `SampleID`, most of the i5 and i7 sequence does not match with that in file name.
-
-```{r}
-which(meta_data[,c(4,6)] != fn[,c(2,3)])
-```
 
 Moreover, we see one 'Netti_J' and two 'Netti_J23', but no 'Netti_J8' and 'Netti_J112', while they exist in the sequence file folder. There are also Netti_J 119, 120, 121 in `SampleID` and no #94,95,96, while they exist in file name. So `SampleID` is unlikely the sample thing in file name.
 
 Here we start to match file name with sample id 2
 
 ```{r}
-meta_data <- meta_data %>% arrange(str_rank(SampleID2, numeric = T))
+# meta_data <- meta_data %>% arrange(str_rank(SampleID2, numeric = T))
 which(meta_data$SampleID2 %>% as.numeric() %>% table() > 1)
 ```
 
@@ -149,6 +156,7 @@ meta_data.new[c(38,37),'Household'] = c('26_2', '26_2')
 ```
 
 ```{r}
+# the other dog in household 33 is still unclear
 which(meta_data.new$Household == 33)
 st.new <- st.new[-51,]
 meta_data.new <- meta_data.new[-51,]

@@ -24,7 +24,7 @@ taxa <- readRDS(here(path,'taxsp.rds'))
 str(meta_data)
 # keep the matched sample ID
 rownames(meta_data) <- 'Netti' %>% str_c(sprintf("%03d", as.integer(meta_data$SampleID2)))
-meta_data <- meta_data[,3:12]
+# meta_data <- meta_data[,3:12]
 
 if(!identical(nrow(meta_data), nrow(st))) stop('meta data does not match with sequence table')
 if(!identical(rownames(meta_data), rownames(st))) stop('rownames in meta data does not match with sequence table')

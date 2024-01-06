@@ -149,7 +149,9 @@ ggplot(data = otu.prop.interest) +
 # Effect of Drug
 
 ```{r message=FALSE}
-aldex.tt <- aldex(otu_table(ps) %>% t, sam$Pheno.or.drug.naive,
+# change only for epi dogs
+ps.epi <- ps %>% subset_samples(Epileptic.or.Control == "Epileptic")
+aldex.tt <- aldex(otu_table(ps.epi) %>% t, sample_data(ps.epi)$Pheno.Y.N,
                   test="t", verbose=FALSE, paired.test=FALSE,
                   effect=TRUE , mc.samples = 128, denom = "all", useMC = TRUE) %>%
     as_tibble(rownames = "Taxon")
@@ -163,7 +165,7 @@ aldex.tt%>%
 ```
 
 ```{r message=FALSE}
-mm <- model.matrix( ~ Group + Pheno.or.drug.naive, sam)
+mm <- model.matrix( ~ Group + Pheno.Y.N + State.Infor,  sam)
 x <- aldex.clr(otu_table(ps) %>% t, 
     mm, mc.samples = 128, denom = "all", useMC = TRUE)
 glm.test <- aldex.glm(x, mm)
@@ -171,10 +173,10 @@ glm.effect <- aldex.glm.effect(x, useMC = TRUE)
 ```
 
 ```{r}
-sig <- glm.test$`Pheno.or.drug.naivepheno:pval` < 0.1
-aldex.plot(glm.effect[["Pheno.or.drug.naivepheno"]], test="effect")
-points(glm.effect[["Pheno.or.drug.naivepheno"]]$diff.win[sig],
-    glm.effect[["Pheno.or.drug.naivepheno"]]$diff.btw[sig], col="blue")
+sig <- glm.test$`GroupB:pval` < 0.1
+aldex.plot(glm.effect[["GroupB"]], test="effect")
+points(glm.effect[["GroupB"]]$diff.win[sig],
+    glm.effect[["GroupB"]]$diff.btw[sig], col="blue")
 glm.test[sig,] %>%
     rownames_to_column('Taxon') %>%
     as_tibble() %>%

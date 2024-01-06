@@ -10,7 +10,7 @@ rm(list = ls())
 library(here)
 library(phyloseq)
 library(tidyverse)
-theme_set(theme_minimal())
+theme_set(theme_bw())
 ```
 
 

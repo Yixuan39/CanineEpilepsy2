@@ -82,12 +82,18 @@ vegan::adonis2(bc ~ Household, data = samdf.ord, permutations=1e4)
 ```
 
 ```{r}
-vegan::adonis2(bc ~ Pheno.or.drug.naive, data = samdf.ord, permutations=1e4)
+vegan::adonis2(bc ~ Pheno.Y.N, data = samdf.ord, permutations=1e4)
 ```
 
+```{r}
+vegan::adonis2(bc ~ State.Infor, data = samdf.ord, permutations=1e4)
+```
 
 ```{r}
-vegan::adonis2(bc ~ Pheno.or.drug.naive + Group, data = samdf.ord, permutations=1e4)
+psord.age <- psord %>% subset_samples(is.na(Age..months.) == F)
+bc.age <- phyloseq::distance(psord.age, method="bray")
+samdf.ord.age <- data.frame(sample_data(psord.age))
+vegan::adonis2(bc.age ~ Age..months., data = samdf.ord.age, permutations=1e4)
 ```
 
 # PCoA
