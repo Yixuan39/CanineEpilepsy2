@@ -5,7 +5,12 @@ library(phangorn)
 library(DECIPHER)
 library(here)
 
-ps <- readRDS(here('Rdata','following_study','ps.rds')) %>%
+filt_fun <- function (x, min_reads = 100, min_samples = 5) {
+    (sum(x) > min_reads) & (sum(x > 0) > min_samples)
+}
+
+ps <- readRDS(here('Rdata','following_study','ps.rds')) %>% 
+    filter_taxa(filt_fun, prune = TRUE) %>%
     transform_sample_counts(function(x) x / sum(x) )
 
 alignment <- AlignSeqs(refseq(ps), anchor=NA)
@@ -17,4 +22,4 @@ fitGTR <- update(fit, k=4, inv=0.2)
 fitGTR <- optim.pml(fitGTR, model="GTR", optInv=TRUE, optGamma=TRUE,
                     rearrangement = "stochastic", control = pml.control(trace = 0))
 
-saveRDS(fitGTR, here('Rdata','following_study','fitGTR.rds'))
+saveRDS(fitGTR, here('Rdata','following_study','fitGTR_filtered.rds'))
