@@ -1,9 +1,9 @@
-
+library(here)
 library(Biostrings)
 library(ShortRead)
 library(dada2); packageVersion("dada2")
 
-setwd("~/Desktop/Epilepsy/")
+setwd("~/project_data/")
 path <- "221024_UNC2X_KKYJ5-KKYGJ-NETTI-in/221024_UNC2X_KKYJ5-KKYGJ-NETTI"
 
 list.files(path)
@@ -97,11 +97,11 @@ head(track)
 # In observed range, but not great, chimera numbers here. Ask Andrea?
 
 tax <- assignTaxonomy(st, "~/tax/silva_nr99_v138.1_train_set.fa.gz", multithread=TRUE)
-#saveRDS(st, "st.rds")
-#saveRDS(tax, "tax.rds")
+saveRDS(st, here("Rdata/following_study","st.rds"))
+saveRDS(tax, here("Rdata/following_study","tax.rds"))
 
 system.time(taxsp <- addSpecies(tax, "~/tax/silva_species_assignment_v138.1.fa.gz")) # 8m
-saveRDS(taxsp, "taxsp.rds")
+saveRDS(taxsp, here("Rdata/following_study","taxsp.rds"))
 
 is.lacto <- taxsp[,6] %in% "Lactobacillus"
 sum(is.lacto)
