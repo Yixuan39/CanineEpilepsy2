@@ -1,0 +1,369 @@
+---
+title: "Microbiome Transmission"
+author: "Yixuan Yang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE}
+rm(list = ls())
+set.seed(2024)
+library(here)
+library(phyloseq)
+library(tidyverse)
+theme_set(theme_bw())
+
+`%!in%` <- Negate(`%in%`)
+
+filt_fun <- function (x, min_reads = 100, min_samples = 5) {
+    (sum(x) > min_reads) & (sum(x > 0) > min_samples)
+}
+ps <- readRDS(here('Rdata','following_study','ps.rds')) %>% 
+     filter_taxa(filt_fun, prune = TRUE)
+```
+
+The sequencing depth for each sample is different, we need to check and bring them to the same level.
+
+```{r}
+# check distribution of sequencing depth
+sample_sums(ps) %>% hist()
+sample_sums(ps) %>% sort() %>% head()
+```
+
+Here, we see most of sample has sequencing depth greater than 40000, we can bring all the samples to this sequencing depth level, and drop the two samples (Netti040 and Netti080) that have low sequencing depth.
+
+```{r message=FALSE}
+# make read depth even
+ps.same.depth <- rarefy_even_depth(ps,
+                        sample.size = 40000, 
+                        verbose = FALSE) # number of sample lost?
+# ps.same.depth <- ps.same.depth %>%
+#     transform_sample_counts(function(x) x / sum(x) )
+```
+
+Now, we have 106 samples.
+
+```{r}
+sam <- sample_data(ps.same.depth)
+# following comments are how I find household to delete
+# table(sam$Household)
+# # which household has only one dog
+# which(sam$Household %in% c(37,46))
+# sam %>% data.frame %>% 
+#     filter(Household %in% c(37,46))
+# # household with more than two dogs
+# sam %>% data.frame %>% 
+#     filter(Household %in% c(17,18,26)) %>% 
+#     arrange(Household) %>% 
+#     select(SampleID2, Household, Epileptic.or.Control)
+exclude <- c(39,79,111,112,49,50,37,38)
+sub.ps <- ps.same.depth %>% 
+    subset_samples(!(SampleID2 %in% exclude))
+sub.sam <- sample_data(sub.ps) %>% data.frame()
+```
+
+
+# Shared ASVs
+
+To find out the proportion of ASVs shared between dogs, we calculate the Jaccard Similarity of ASVs between each pair of dogs.
+
+```{r}
+# function to find Jaccard Similarity of ASVs between two dogs
+# sample1 and sample2 could be index or name of the sample
+# otu is the otu_table
+shared.ASV <- function(sample1, sample2, otu) {
+    # get existence of ASVs
+    ASV1 <- otu[sample1,] > 0
+    ASV2 <- otu[sample2,] > 0
+    # get names of exist ASVs
+    ASV1.names <- colnames(ASV1)[ASV1]
+    ASV2.names <- colnames(ASV2)[ASV2]
+    # calculate Jaccard Similarity
+    ASV.intersect <- length(intersect(ASV1.names, ASV2.names))
+    ASV.union <- length(union(ASV1.names, ASV2.names))
+    return(ASV.intersect/ASV.union)
+}
+
+# calculate Jaccard Similarity for all pairs 
+otu <- otu_table(sub.ps)
+# samples <- rownames(otu)
+# this can calculate all possible comparison
+# similarity <- outer(samples, samples,
+#                     FUN = Vectorize(function(x, y) shared.ASV(x, y, otu)))
+# # show part of the matrix
+# similarity[1:5,1:5] 
+```
+
+
+
+
+# ASV similarity
+
+To find out if dogs in same household share more ASVs, we compare the ASV similarity intra and inter households.
+
+Rules:
+
+1. For each dog, find the other dog in the same household, and calculate the Jaccard Similarity.
+
+2. For each dog, find another dog in different household, but with same condition as the dog picked from the same household, and calculate the Jaccard Similarity.
+
+3. Control the effect of health condition. Because of the study design, one of the dog in a house is epileptic, and the other is control. So, when we select the inter-pair dog, we need to make sure they have different health condition.
+
+4. Control the effect of breed.
+
+
+## Breed Control
+
+We know that for most of the households, it is more likely that they have two dogs in same breed. Here we calculate the proportion of a pair of dog that has same breed. To control the breed effect, we want the proportion of a pair of dog having same breed that are from the same and different households be the same.
+
+```{r}
+same.breed <- function(data) {
+    same.proportion <- c()
+    diff.proportion <- c()
+    for (sample in 1:nrow(data)) {
+        breed <- data[sample,'Predominant.Breed']
+        house <- data[sample,'Household']
+        cond <- data[sample, 'Epileptic.or.Control']
+        # what is the proportion that same house has same breed
+        same.house.breed <- data %>% 
+            filter(Household == house) %>% 
+            pull(Predominant.Breed)
+        other.house.breed <- data %>% 
+            filter(Household != house) %>% 
+            filter(Epileptic.or.Control != cond) %>% 
+            pull(Predominant.Breed)
+        # if there is only one dog in the house, we skip
+        if (length(same.house.breed) == 1) {next}
+        same.pair <- if_else(length(unique(same.house.breed)) == 1, 1, 0) 
+        # if one of the breed in the same house is in the other house
+        diff.pair <- if_else(breed %in% other.house.breed, 1, 0)
+        same.proportion <- c(same.proportion, same.pair)
+        diff.proportion <- c(diff.proportion, diff.pair)
+    }
+    same.proportion <- sum(same.proportion == 1)/length(same.proportion)
+    diff.proportion <- sum(diff.proportion == 1)/length(diff.proportion)
+    return(data.frame(same.prop = same.proportion, diff.prop = diff.proportion))
+}
+same.breed(data.frame(sub.sam))
+```
+
+Here we see the proportion that dogs from same household having same breed is around 0.67. The proportion for that in the different household is less than 0.6. However, here we have maximized the proportion, that is when selecting a dog from a different household, we force it to pick the one with same breed if possible. This can be caused by the unique breed in some households. (The breeds only appear in that household).
+
+```{r}
+unique.breed <- c()
+for (house in unique(sub.sam$Household)) {
+    # what is the proportion that same house has same breed
+    same.house <- sub.sam %>% 
+        filter(Household == house)
+    other.house <- sub.sam %>% 
+        filter(Household != house)
+    # if there is only one dog in the house, we skip
+    if (nrow(same.house) == 1) {next}
+    if (all(same.house$Predominant.Breed %!in% other.house$Predominant.Breed)){
+        unique.breed <- append(unique.breed, house)
+    }
+}
+unique.breed
+```
+
+Here we find out households that have unique breed and try to drop some of them to get the breed effect controlled.
+
+```{r}
+breed.prop.compare <- data.frame()
+drop_house_list <- list()
+for(drop_n in 1:length(unique.breed)){
+    drop_house <- sample(unique.breed, drop_n)
+    drop_house_list[[drop_n]] <- drop_house
+    test.sam <- sub.sam %>% filter(Household %!in% drop_house)
+    breed.prop.compare <- bind_rows(breed.prop.compare,
+                                    same.breed(test.sam))  
+}
+breed.prop.compare <- cbind(drop_n = 1:length(unique.breed), breed.prop.compare)
+# ggplot(data = breed.prop.compare) +
+#     geom_point(aes(drop_n, abs(same.prop-diff.prop)))
+drop <- which.min(abs(breed.prop.compare$same.prop-breed.prop.compare$diff.prop))
+print(str_c('Households droped are: ',
+            str_c(drop_house_list[[drop]], collapse = ',')))
+
+breed.control.sam <- sub.sam[-which(sub.sam$Household %in% drop_house_list[[drop]]),]
+same.breed(breed.control.sam)
+```
+
+The proportion of same breed becomes equal after we drop four households. Now we have 90 observations in total.
+
+## Calculation
+
+Now, we can start to compare the ASV similarity intra and inter households. `pair1.cond` means we define the intra-group as dogs in the same household and have the different health condition (which is default in the study design). `pair2.cond` means we define the inter-group as dogs in different household and have the different health condition. 
+
+```{r}
+add.conditions <- function(data, current, arg.list) {
+    # arg.list <- list(...)
+    for (arg in arg.list) {
+        expr <- rlang::parse_expr(arg)
+        data <- data %>% 
+            filter(!!expr)
+    }
+    return(data)
+}
+
+ASV.group.similarity <- function(sam, otu, 
+                                 pair1.condition = NULL,
+                                 pair2.condition = NULL, 
+                                 breed.control = T) {
+    sam <- data.frame(sam)
+    result <- data.frame()
+    for (i in rownames(sam)){
+        current <- sam[i,]
+        # get data.frame of dogs in the same household, but not the current dog
+        intra.group <- sam %>% 
+            add.conditions(current,pair1.condition) %>% 
+            dplyr::setdiff(current)
+        # skip household with only one dog.
+        if (nrow(intra.group)==0) {next}
+        
+        inter.group <- sam %>% 
+            add.conditions(current,pair2.condition)
+        # if breed in pair1 is different, we select a different breed in pair2
+        if (breed.control) {
+            # if proportion of same breed is greater than breed control 
+            # and the current dog's breed exist in the inter group
+            if (current$Predominant.Breed %in% inter.group$Predominant.Breed) {
+                inter.group <- inter.group %>% 
+                    filter(Predominant.Breed == current$Predominant.Breed)
+            } else {
+                inter.group <- inter.group %>% 
+                    filter(Predominant.Breed != current$Predominant.Breed)
+            }
+        }
+        # randomly select one dog that fulfill the condition. If no dog reach the condition, skip.
+        if (nrow(inter.group) == 0) {
+            next
+        } else if (nrow(inter.group) > 1) {
+        inter.group <- inter.group %>% 
+            sample_n(1)
+        }
+        
+        intra.group <- rownames(intra.group)
+        inter.group <- rownames(inter.group)
+        shared.intra.group <- shared.ASV(i, intra.group, otu)
+        shared.inter.group <- shared.ASV(i, inter.group, otu)
+        
+        result <- result %>% 
+            rbind(data.frame(current,
+                             same.group = shared.intra.group,
+                             diff.group = shared.inter.group))
+    }
+    return(result)
+}
+```
+
+```{r}
+pair1.cond <- c('Household == current$Household',
+                'Epileptic.or.Control != current$Epileptic.or.Control')
+pair2.cond <- c('Household != current$Household',
+                'Epileptic.or.Control != current$Epileptic.or.Control')
+breed.control.result <- ASV.group.similarity(breed.control.sam, otu, pair1.cond, pair2.cond)
+```
+
+
+
+```{r}
+ggplot(breed.control.result) +
+    geom_text(aes(x = diff.group, y = same.group, color = Epileptic.or.Control, label = Household)) +
+    geom_abline(intercept = 0, slope = 1, color = 'blue') +
+    facet_wrap(~Epileptic.or.Control) +
+    tune::coord_obs_pred() +
+    labs(x = 'Inter-group ASV Similarity',
+         y = 'Intra-group ASV Similarity',
+         color = 'Health Condition') 
+```
+
+From the plot, we see that dogs in the same household share more ASVs than dogs in different household. 
+
+```{r}
+same.house.similarity <- breed.control.result$same.group
+diff.house.similarity <- breed.control.result$diff.group
+(same.house.similarity - diff.house.similarity) %>% summary()
+```
+
+The average difference between the two group is around 15%.
+
+To test if the difference is significant, we can use paired t test.
+
+```{r}
+keep <- seq(1,length(same.house.similarity),2)
+same.house.similarity <- same.house.similarity[keep]
+t.test(same.house.similarity, diff.house.similarity, alternative = 'greater')
+```
+
+# Shared ASVs
+
+We know that dogs in the same household shared more ASV. Now we want to know what ASVs are shared exactly.
+
+Here we are not controlling for breed. The algorithm is simple: for the pair of dogs in the same household, is the ASV both exist? If so, we classify the ASV as shared within the household.
+
+Prevalence is the observed probability of each ASV exist in dogs.
+
+Share Rate is the observed probability of each ASV exist in both dogs with a household.
+
+```{r}
+otu.both.exist <- sign(otu)
+for (i in seq(1, nrow(otu.both.exist),2)) {
+    both.exist <- if_else(colSums(otu.both.exist[c(i,i+1)])==2,TRUE, FALSE)
+    # for ASVs that are not both exist in both dog in same household, assgin as 0.
+    otu.both.exist[c(i,i+1), -which(both.exist)] <- 0
+}
+
+
+Prevalence <- colSums(sign(otu))/nrow(otu)
+Share.Rate <- colSums(otu.both.exist)/nrow(otu.both.exist)
+n_house <- unique(sub.sam$Household) %>% length()
+Taxon <- tax_table(sub.ps) %>% 
+    data.frame() %>% 
+    rownames_to_column('ASV')
+shared.ASV.tb <- data.frame(Taxon,
+                            Prevalence = Prevalence,
+                            Share.Rate = Share.Rate)
+```
+
+
+By definition, the expected value of intra-household share rate is $Prevalence^2$. 
+
+```{r}
+df <- data.frame(x=seq(0,1,0.01), y=(seq(0,1,0.01))^2)
+ggplot(shared.ASV.tb,aes(Prevalence, Share.Rate)) +
+    geom_point() +
+    geom_line(data = df, aes(x,y), color='blue' ) +
+    tune::coord_obs_pred() +
+    labs(x = 'Prevalence',
+         y = 'Share Rate')
+```
+
+
+
+```{r}
+shared.ASV.tb <- shared.ASV.tb %>%
+        rowwise() %>% 
+        mutate(n_shared=Share.Rate*n_house) %>% 
+        mutate(fold.diff=(Share.Rate/Prevalence^2)) %>% 
+        mutate(residual=(Share.Rate-Prevalence^2)) %>%
+        mutate(binom.test = binom.test(x=n_shared,
+                                      n=n_house,
+                                      p=Prevalence^2,
+                                      alternative='greater')$p.value)
+shared.ASV.tb %>% 
+    select(ASV, Genus, Prevalence, Share.Rate,fold.diff,residual, binom.test) %>% 
+    arrange(binom.test) %>% 
+    filter(binom.test <= 0.05) %>% 
+    as.data.frame()
+```
+
+
+
+
+
+
