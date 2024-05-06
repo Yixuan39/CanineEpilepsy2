@@ -1,0 +1,198 @@
+---
+title: "metadata cleaning"
+author: "Yixuan Yang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE}
+rm(list = ls())
+library(tidyverse)
+library(readxl)
+library(here)
+library(phyloseq)
+library(DECIPHER)
+```
+
+Here we start to explore the meta data form. 
+
+```{r}
+file <- 'Epilepsy study mapping file with patient info updated 1.22.24 for microbiome analysis.xlsx'
+meta_data <- read_excel(here('data', 'following_study', file), 
+                        n_max = 118,
+                        na = '.') %>%
+    arrange(str_rank(SampleID2, numeric = T))
+# the sample id2 column was in float, we we change it to integer
+str(meta_data)
+meta_data$Household <- meta_data$Household %>% 
+    as.character()
+meta_data$`Age (months)` <- meta_data$`Age (months)` %>%
+    str_remove('\\.0') %>% 
+    as.numeric()
+meta_data$`Zip Code` <- meta_data$`Zip Code` %>%
+    str_remove('\\.0') %>%
+    str_replace('O','0')
+# remove comments row in excel
+meta_data <- meta_data %>% select(-COMMENTS) %>% data.frame()
+# match sample name same as that in the asv table
+rownames(meta_data) <- 'Netti' %>%
+    str_c(sprintf("%03d", as.integer(meta_data$SampleID2)))
+```
+
+# Integrate data with phyloseq
+
+```{r}
+st <- readRDS(here('data','following_study','st.rds'))
+taxa <- readRDS(here('data','following_study','taxsp.rds'))
+
+if(!identical(nrow(meta_data), nrow(st))) stop('meta data does not match with sequence table')
+if(!identical(rownames(meta_data), rownames(st))) stop('rownames in meta data does not match with sequence table')
+# create a phyloseq object
+ps <- phyloseq(sample_data(meta_data),
+               otu_table(st, taxa_are_rows = FALSE),
+               tax_table(taxa))
+
+# Add ASV sequences
+seqs <- Biostrings::DNAStringSet(taxa_names(ps))
+names(seqs) <- taxa_names(ps)
+ps <- merge_phyloseq(ps, seqs)
+taxa_names(ps) <- paste0("ASV", seq(ntaxa(ps))) # here we store 
+```
+
+# Quality Assurance
+
+Do some QA on the sequencing libraries:
+
+```{r}
+plot(rowSums(st), log="y")
+which(rowSums(st) < 2e+3)
+which(rowSums(st) < 100)
+```
+
+All of the data has more than 100 reads, but sample 40,80 and 108 have relative low sequencing depth.
+
+**remove duplicated samples**
+
+For household 52
+
+sample 106,107,108 are duplicates of sample 103. sample 105 is the duplicate of sample 104.
+
+```{r}
+rowSums(st)[c(103,106,107,108)] %>% sort()
+rowSums(st)[c(104,105)] %>% sort()
+```
+
+Here we can keep sample 103 since it has more reads.
+
+For household 54
+
+sample 63,113,115 are duplicates of sample 114. sample 64,117,118 are duplicates of sample 116.
+
+```{r}
+rowSums(st)[c(63,113,114,115)] %>% sort()
+rowSums(st)[c(64,116,117,118)] %>% sort()
+```
+
+Here we can keep the sample with most reads (sample 64 and 114)
+
+# summary
+
+For now we can remove sample 106,107,108,113,115,63,116,117,118.
+
+```{r}
+remove.list <- c(104,106,107,108,113,115,63,116,117,118)
+
+ps <- ps %>% 
+    subset_samples(!(SampleID2 %in% remove.list))
+```
+
+For households that have more than two samples, we will remove the exceed samples and make them into pairs.
+
+```{r}
+table(sample_data(ps)$Household)
+```
+
+There are 4 dogs in household 17, 18, and 26.
+
+```{r}
+sample_data(ps) %>% data.frame() %>% 
+    filter(Household %in% c(17,18,26)) %>%
+    arrange(Household) %>%
+    select(SampleID2, Household, Epileptic.or.Control)
+```
+
+Remove exceeded samples to make a paired data.
+
+```{r}
+remove.list <- c(39,79,111,112,49,50,37,38)
+ps <- ps %>% 
+    subset_samples(!(SampleID2 %in% remove.list))
+ps
+```
+
+Now we have 100 samples (data are paired within 50 households)
+
+Filter out taxa that are very rare across samples
+
+```{r}
+filt_fun <- function (x, min_reads = 100, min_samples = 5) {
+    (sum(x) > min_reads) & (sum(x > 0) > min_samples)
+}
+ps <- ps %>% 
+     filter_taxa(filt_fun, prune = TRUE)
+```
+
+# Align Sequences
+
+```{r}
+alignment <- AlignSeqs(refseq(ps), anchor=NA)
+alignment.file <- here('data', 'following_study', 'msa.fasta')
+writeXStringSet(alignment, alignment.file)
+```
+
+Here we use `raxml-ng` to find the best tree of the alignment
+
+```{bash, eval = FALSE}
+raxml-ng --msa data/following_study/msa.fasta --model GTR+G
+```
+
+```{r}
+best.tree <- read_tree(here('data','following_study','msa.fasta.raxml.bestTree'))
+ps <- merge_phyloseq(ps, phy_tree(best.tree))
+```
+
+
+# rarefied data
+
+The sequencing depth for each sample is different, we need to check and bring them to the same level.
+
+```{r}
+# check distribution of sequencing depth
+sample_sums(ps) %>% hist()
+sample_sums(ps) %>% sort() %>% head()
+```
+
+Here, we see most of sample has sequencing depth greater than 40000, we can bring all the samples to this sequencing depth level, and drop the two samples (Netti040 and Netti080) that have low sequencing depth.
+
+```{r message=FALSE}
+# make read depth even
+ps.rarefied <- rarefy_even_depth(ps, sample.size = 40000)
+ps.rarefied
+```
+
+Two samples are lost after rarefying. Now we have 98 samples.
+
+# Save Data
+
+```{r}
+saveRDS(ps, file = here('data','following_study','ps.rds'))
+saveRDS(ps.rarefied, file = here('data','following_study','ps_rarefied.rds'))
+```
+
+
+
+
