@@ -11,13 +11,17 @@ library(here)
 library(phyloseq)
 library(tidyverse)
 theme_set(theme_bw())
+filt_fun <- function (x, min_reads = 100, min_samples = 5) {
+    (sum(x) > min_reads) & (sum(x > 0) > min_samples)
+}
 ```
 
 
 ```{r}
 ps <- read_rds(here('data','following_study','ps.rds'))
 ps.pilot <- read_rds(here('data','pilot_study','ps.rds'))
-ps.all <- merge_phyloseq(ps, ps.pilot)
+ps.all <- merge_phyloseq(ps, ps.pilot) %>% 
+    filter_taxa(filt_fun, prune = TRUE)
 ps.melt <- ps.all %>% psmelt()
 ```
 
@@ -34,8 +38,9 @@ ggplot(data = ps.melt) +
 ggsave(here('figures','abundance_phylum.png'), width = 6, height = 4)
 ```
 
+Here we start to look at the relative abundance by Genus in each of Actinobacteriota, Bacteroidota, Fusobacteriota, and Proteobacteria
 
-```{r, include=FALSE}
+```{r}
 ggplot(data = ps.melt %>% filter(Phylum == 'Actinobacteriota')) + 
     geom_col(aes(Sample, Abundance, fill = Genus),position = "fill", width = 1) +
     theme(axis.text.x=element_blank(),
