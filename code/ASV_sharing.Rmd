@@ -17,55 +17,17 @@ library(phyloseq)
 library(tidyverse)
 theme_set(theme_bw())
 
-`%!in%` <- Negate(`%in%`)
-
 filt_fun <- function (x, min_reads = 100, min_samples = 5) {
     (sum(x) > min_reads) & (sum(x > 0) > min_samples)
 }
-ps <- readRDS(here('Rdata','following_study','ps.rds')) %>% 
+
+ps.rarefied <- readRDS(here('data','following_study','ps_rarefied.rds')) %>% 
      filter_taxa(filt_fun, prune = TRUE)
+ps.rarefied
+
+sam <- sample_data(ps.rarefied) %>% data.frame()
+otu <- otu_table(ps.rarefied)
 ```
-
-The sequencing depth for each sample is different, we need to check and bring them to the same level.
-
-```{r}
-# check distribution of sequencing depth
-sample_sums(ps) %>% hist()
-sample_sums(ps) %>% sort() %>% head()
-```
-
-Here, we see most of sample has sequencing depth greater than 40000, we can bring all the samples to this sequencing depth level, and drop the two samples (Netti040 and Netti080) that have low sequencing depth.
-
-```{r message=FALSE}
-# make read depth even
-ps.same.depth <- rarefy_even_depth(ps,
-                        sample.size = 40000, 
-                        verbose = FALSE) # number of sample lost?
-# ps.same.depth <- ps.same.depth %>%
-#     transform_sample_counts(function(x) x / sum(x) )
-```
-
-Now, we have 106 samples.
-
-```{r}
-sam <- sample_data(ps.same.depth)
-# following comments are how I find household to delete
-# table(sam$Household)
-# # which household has only one dog
-# which(sam$Household %in% c(37,46))
-# sam %>% data.frame %>% 
-#     filter(Household %in% c(37,46))
-# # household with more than two dogs
-# sam %>% data.frame %>% 
-#     filter(Household %in% c(17,18,26)) %>% 
-#     arrange(Household) %>% 
-#     select(SampleID2, Household, Epileptic.or.Control)
-exclude <- c(39,79,111,112,49,50,37,38)
-sub.ps <- ps.same.depth %>% 
-    subset_samples(!(SampleID2 %in% exclude))
-sub.sam <- sample_data(sub.ps) %>% data.frame()
-```
-
 
 # Shared ASVs
 
@@ -87,19 +49,7 @@ shared.ASV <- function(sample1, sample2, otu) {
     ASV.union <- length(union(ASV1.names, ASV2.names))
     return(ASV.intersect/ASV.union)
 }
-
-# calculate Jaccard Similarity for all pairs 
-otu <- otu_table(sub.ps)
-# samples <- rownames(otu)
-# this can calculate all possible comparison
-# similarity <- outer(samples, samples,
-#                     FUN = Vectorize(function(x, y) shared.ASV(x, y, otu)))
-# # show part of the matrix
-# similarity[1:5,1:5] 
 ```
-
-
-
 
 # ASV similarity
 
@@ -148,22 +98,22 @@ same.breed <- function(data) {
     diff.proportion <- sum(diff.proportion == 1)/length(diff.proportion)
     return(data.frame(same.prop = same.proportion, diff.prop = diff.proportion))
 }
-same.breed(data.frame(sub.sam))
+same.breed(sam)
 ```
 
 Here we see the proportion that dogs from same household having same breed is around 0.67. The proportion for that in the different household is less than 0.6. However, here we have maximized the proportion, that is when selecting a dog from a different household, we force it to pick the one with same breed if possible. This can be caused by the unique breed in some households. (The breeds only appear in that household).
 
 ```{r}
 unique.breed <- c()
-for (house in unique(sub.sam$Household)) {
+for (house in unique(sam$Household)) {
     # what is the proportion that same house has same breed
-    same.house <- sub.sam %>% 
+    same.house <- sam %>% 
         filter(Household == house)
-    other.house <- sub.sam %>% 
+    other.house <- sam %>% 
         filter(Household != house)
     # if there is only one dog in the house, we skip
     if (nrow(same.house) == 1) {next}
-    if (all(same.house$Predominant.Breed %!in% other.house$Predominant.Breed)){
+    if (all(!(same.house$Predominant.Breed %in% other.house$Predominant.Breed))){
         unique.breed <- append(unique.breed, house)
     }
 }
@@ -178,7 +128,7 @@ drop_house_list <- list()
 for(drop_n in 1:length(unique.breed)){
     drop_house <- sample(unique.breed, drop_n)
     drop_house_list[[drop_n]] <- drop_house
-    test.sam <- sub.sam %>% filter(Household %!in% drop_house)
+    test.sam <- sam %>% filter(!(Household %in% drop_house))
     breed.prop.compare <- bind_rows(breed.prop.compare,
                                     same.breed(test.sam))  
 }
@@ -189,7 +139,7 @@ drop <- which.min(abs(breed.prop.compare$same.prop-breed.prop.compare$diff.prop)
 print(str_c('Households droped are: ',
             str_c(drop_house_list[[drop]], collapse = ',')))
 
-breed.control.sam <- sub.sam[-which(sub.sam$Household %in% drop_house_list[[drop]]),]
+breed.control.sam <- sam[-which(sam$Household %in% drop_house_list[[drop]]),]
 same.breed(breed.control.sam)
 ```
 
@@ -277,8 +227,8 @@ ggplot(breed.control.result) +
     geom_abline(intercept = 0, slope = 1, color = 'blue') +
     facet_wrap(~Epileptic.or.Control) +
     tune::coord_obs_pred() +
-    labs(x = 'Inter-group ASV Similarity',
-         y = 'Intra-group ASV Similarity',
+    labs(x = 'Inter-household ASV Similarity',
+         y = 'Intra-household ASV Similarity',
          color = 'Health Condition') 
 ```
 
@@ -321,8 +271,8 @@ for (i in seq(1, nrow(otu.both.exist),2)) {
 
 Prevalence <- colSums(sign(otu))/nrow(otu)
 Share.Rate <- colSums(otu.both.exist)/nrow(otu.both.exist)
-n_house <- unique(sub.sam$Household) %>% length()
-Taxon <- tax_table(sub.ps) %>% 
+n_house <- unique(sam$Household) %>% length()
+Taxon <- tax_table(ps.rarefied) %>% 
     data.frame() %>% 
     rownames_to_column('ASV')
 shared.ASV.tb <- data.frame(Taxon,
@@ -359,7 +309,8 @@ shared.ASV.tb %>%
     select(ASV, Genus, Prevalence, Share.Rate,fold.diff,residual, binom.test) %>% 
     arrange(binom.test) %>% 
     filter(binom.test <= 0.05) %>% 
-    as.data.frame()
+    as.data.frame() %>% 
+    kableExtra::kable()
 ```
 
 
