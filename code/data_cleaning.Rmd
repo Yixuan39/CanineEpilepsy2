@@ -15,10 +15,9 @@ library(tidyverse)
 library(readxl)
 library(here)
 library(phyloseq)
-library(DECIPHER)
 ```
 
-Here we start to explore the meta data form. 
+# Check Metadata
 
 ```{r}
 file <- 'Epilepsy study mapping file with patient info updated 1.22.24 for microbiome analysis.xlsx'
@@ -41,6 +40,18 @@ meta_data <- meta_data %>% select(-COMMENTS) %>% data.frame()
 # match sample name same as that in the asv table
 rownames(meta_data) <- 'Netti' %>%
     str_c(sprintf("%03d", as.integer(meta_data$SampleID2)))
+meta_data <- meta_data %>% add_column(study = 'following')
+```
+
+Convert State to region
+
+```{r}
+state.region <- usa::states %>% 
+    select(name,region) %>%
+    column_to_rownames('name') %>% 
+    mutate(region = as.character(region))
+meta_data <- meta_data %>%
+    cbind(region = state.region[meta_data$State,])
 ```
 
 # Integrate data with phyloseq
@@ -99,7 +110,7 @@ rowSums(st)[c(64,116,117,118)] %>% sort()
 
 Here we can keep the sample with most reads (sample 64 and 114)
 
-# summary
+# Clean Metadata
 
 For now we can remove sample 106,107,108,113,115,63,116,117,118.
 
@@ -136,20 +147,10 @@ ps
 
 Now we have 100 samples (data are paired within 50 households)
 
-Filter out taxa that are very rare across samples
-
-```{r}
-filt_fun <- function (x, min_reads = 100, min_samples = 5) {
-    (sum(x) > min_reads) & (sum(x > 0) > min_samples)
-}
-ps <- ps %>% 
-     filter_taxa(filt_fun, prune = TRUE)
-```
-
 # Align Sequences
 
-```{r}
-alignment <- AlignSeqs(refseq(ps), anchor=NA)
+```{r eval=FALSE}
+alignment <- DECIPHER::AlignSeqs(refseq(ps), anchor=NA)
 alignment.file <- here('data', 'following_study', 'msa.fasta')
 writeXStringSet(alignment, alignment.file)
 ```
@@ -157,16 +158,15 @@ writeXStringSet(alignment, alignment.file)
 Here we use `raxml-ng` to find the best tree of the alignment
 
 ```{bash, eval = FALSE}
-raxml-ng --msa data/following_study/msa.fasta --model GTR+G
+raxml-ng --msa data/following_study/msa.fasta --model GTR+G --prefix data/following_study/tree
 ```
 
 ```{r}
-best.tree <- read_tree(here('data','following_study','msa.fasta.raxml.bestTree'))
+best.tree <- read_tree(here('data','following_study','tree.raxml.bestTree'))
 ps <- merge_phyloseq(ps, phy_tree(best.tree))
 ```
 
-
-# rarefied data
+# Rarefied Data
 
 The sequencing depth for each sample is different, we need to check and bring them to the same level.
 
