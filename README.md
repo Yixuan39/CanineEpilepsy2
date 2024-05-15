@@ -2,9 +2,7 @@
 
 # Data
 
-Data cleaning: [metadata_cleaning.html](https://yixuan39.github.io/CanineEpilepsy2/code/metadata_cleaning.html) 
-
-Store data in `phyloseq`: [phyloseq.html](https://yixuan39.github.io/CanineEpilepsy2/code/phyloseq.html) 
+Data cleaning: [data_cleaning.html](https://yixuan39.github.io/CanineEpilepsy2/code/data_cleaning.html) 
 
 Below is a microbiome abundance plot of our samples. More abundance plots in different taxanomic levels are in  [Abundance.html](https://yixuan39.github.io/CanineEpilepsy2/code/Abundance.html) 
 
