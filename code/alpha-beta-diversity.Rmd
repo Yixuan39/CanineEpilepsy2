@@ -1,0 +1,192 @@
+---
+title: "alpha-beta-diversity"
+author: "Yixuan Yang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set Up
+
+```{r message=FALSE}
+library(tidyverse)
+library(here)
+library(phyloseq)
+library(vegan)
+theme_set(theme_bw())
+filt_fun <- function (x, min_reads = 100, min_samples = 5) {
+    (sum(x) > min_reads) & (sum(x > 0) > min_samples)
+}
+ps <- readRDS(here('data','following_study','ps_rarefied.rds')) %>% 
+    filter_taxa(filt_fun, prune = TRUE) 
+sample_data(ps)[is.na(sample_data(ps))] <- 'NA'
+sam <- data.frame(sample_data(ps))
+```
+
+# Alpha Diversity
+
+```{r}
+alpha.diversity <- estimate_richness(ps)
+plot_richness(ps, measures = 'Shannon',x = 'Epileptic.or.Control') +
+    geom_boxplot()
+```
+
+```{r}
+plot_richness(ps, measures = 'Shannon',x = 'Breed.Group..1.') +
+    geom_boxplot()
+```
+
+
+# Beta Diversity
+
+```{r}
+ord <- ps %>% ordinate(method = "MDS", distance = 'unifrac')
+plot_ordination(ps, ord)
+```
+
+The PCoA plot shows a very separate pattern of four clusters. Let's take a look at the phlogenetic tree of our data.
+
+```{r}
+plot_tree(ps, "treeonly")
+```
+
+Some of the taxa have extremely long branch. Are they influential?
+
+```{r warning=FALSE}
+# Warning: Not all nodes are descendants in this tree
+if (require(adephylo)) {dist.root <- adephylo::distRoot(phy_tree(ps))}
+hist(dist.root); dist.root %>% sort(decreasing = TRUE) %>% head(20)
+detach('package:adephylo', character.only = TRUE, unload = TRUE)
+```
+
+Let's see which ASV has distance from root longer than 10.
+
+```{r}
+long.branch <- dist.root[dist.root > 5]
+long.branch
+```
+
+Are these ASVs special?
+
+```{r}
+dada2:::pfasta(refseq(ps)[names(long.branch)], ids = names(long.branch))
+```
+
+Result returned from BLAST (web interface):
+
+| ASV | Taxonomy | % identity |
+| :---: | :---: | :---: |
+| ASV601 | Anaerobutyricum hallii | 95.1 |
+| ASV438 | uncultured Blautia sp. | 97.3 |
+
+```{r}
+pwalign::stringDist(refseq(ps)[names(long.branch)])
+```
+
+Now we remove these outlier ASVs
+
+```{r}
+all.taxa <- taxa_names(ps)
+keep.taxa <- all.taxa[!(all.taxa %in% names(long.branch))]
+ps.sub <- ps %>% prune_taxa(keep.taxa, .)
+```
+
+# Test for Effect
+
+```{r}
+plot_ord <- function(data, factor, method, distance, strata = NULL){
+    data.ord <- ordinate(data, method = method, distance = distance)
+    p <- plot_ordination(data, data.ord, color = factor)
+    p <- p + stat_ellipse(type = "t",geom = "polygon",alpha = 0)
+
+    dist.matrix <- phyloseq::distance(data, method=distance)
+    model <- as.formula(paste0('dist.matrix ~ ', factor))
+    sam <- data.frame(sample_data(data))
+    if (is.null(strata) == FALSE){strata.variable <- sam[,strata]} else {strata.variable <- NULL}
+    permanova <- adonis2(model, data = sam, permutations=1e4, parallel = parallel::detectCores(), strata = strata.variable)
+    p <- p + ggtitle(str_c(factor,method,distance, sep = ' - '),
+                     subtitle = str_c('p = ', permanova$`Pr(>F)`, '\n',
+                                      'R2 = ', permanova$R2))
+    print(p)
+}
+
+```
+
+
+## Household Effect
+
+```{r}
+dist.matrix <- phyloseq::distance(ps.sub, method='bray')
+adonis2(dist.matrix~Household,
+        data = data.frame(sample_data(ps.sub)),
+        permutations=1e4,
+        parallel = parallel::detectCores())
+```
+
+## Breed Effect
+
+```{r}
+plot_ord(ps.sub, 'Breed.Group..1.','MDS','bray', strata = 'Household')
+plot_ord(ps.sub, 'Breed.Group..1.','MDS','wunifrac', strata = 'Household')
+plot_ord(ps.sub, 'Breed.Group..1.','NMDS','bray', strata = 'Household')
+plot_ord(ps.sub, 'Breed.Group..1.','NMDS','wunifrac', strata = 'Household')
+```
+
+The Breed Group has a significant effect.
+
+
+## Sex Effect
+
+```{r}
+plot_ord(ps.sub, 'Sex','MDS','bray')
+plot_ord(ps.sub, 'Sex','MDS','wunifrac')
+plot_ord(ps.sub, 'Sex','NMDS','bray')
+plot_ord(ps.sub, 'Sex','NMDS','wunifrac')
+```
+
+## Spayed or Neutered Effect
+
+```{r}
+plot_ord(ps.sub, 'Spayed.or.Neutered','MDS','bray')
+plot_ord(ps.sub, 'Spayed.or.Neutered','MDS','wunifrac')
+plot_ord(ps.sub, 'Spayed.or.Neutered','NMDS','bray')
+plot_ord(ps.sub, 'Spayed.or.Neutered','NMDS','wunifrac')
+```
+
+
+## Drug Effect
+
+Here we are only focusing on epileptic dogs.
+
+```{r}
+ps.sub.epi <- ps.sub %>% 
+    subset_samples(Epileptic.or.Control == 'Epileptic')
+plot_ord(ps.sub.epi, 'Pheno.Y.N','MDS','bray')
+plot_ord(ps.sub.epi, 'Pheno.Y.N','MDS','wunifrac')
+plot_ord(ps.sub.epi, 'Pheno.Y.N','NMDS','bray')
+plot_ord(ps.sub.epi, 'Pheno.Y.N','NMDS','wunifrac')
+```
+
+Drug usage does not seem like a significant factor.
+
+
+# Age Effect
+
+```{r}
+ps.age <- ps.sub %>% 
+    subset_samples(Age..months. != 'NA')
+sample_data(ps.age)$Age..months. <- sample_data(ps.age)$Age..months. %>% 
+    as.numeric()
+ps.age # two samples does not contain age information
+dist.matrix <- phyloseq::distance(ps.age, method='bray')
+sam.age <- sample_data(ps.age) %>% data.frame()
+adonis2(dist.matrix~Age..months., data = sam.age, permutations=1e4, strata = sam.age$Household)
+```
+
+```{r}
+sessionInfo()
+```
+
