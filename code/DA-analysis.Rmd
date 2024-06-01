@@ -5,204 +5,196 @@ date: "`r Sys.Date()`"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
-```{r message=FALSE}
-set.seed(2023)
-library(here)
-library(phyloseq)
-library(tidyverse)
-library(ALDEx2)
-library(rstatix)
-library(compositions)
-theme_set(theme_minimal())
-```
+# Set Up
 
 ```{r}
+set.seed(255)
+library(tidyverse)
+library(ALDEx2)
+library(ANCOMBC)
+library(corncob)
+library(MicrobiomeStat)
+library(rstatix)
+library(phyloseq)
+library(here)
+library(future.apply);plan(multisession)
 filt_fun <- function (x, min_reads = 100, min_samples = 5) {
     (sum(x) > min_reads) & (sum(x > 0) > min_samples)
 }
-ps <- readRDS(here('Rdata','following_study','ps.rds')) %>% 
-    filter_taxa(filt_fun, prune = TRUE) 
-# convert data into proportion
-ps.prop <- ps %>% transform_sample_counts(function(x) x / sum(x) )
 
-sam <- sample_data(ps) %>% data.frame() %>%
-    rownames_to_column('Sample') %>% as_tibble()
-tax <- tax_table(ps) %>% data.frame() %>%
-    rownames_to_column('Taxon') %>% as_tibble
+ps <- readRDS(here('data','following_study','ps.rds')) %>% 
+    filter_taxa(filt_fun, prune = TRUE)
+ps.rare <- readRDS(here('data','following_study','ps_rarefied.rds')) %>% 
+    filter_taxa(filt_fun, prune = TRUE)
+tax <- tax_table(ps)
+alpha <- 0.05
+max.cores <- parallel::detectCores()
+ps;ps.rare
 ```
 
-# Does the microbiome different in health and epilepsy group?
 
-## ALDEx2 analysis
+# T-test
 
-```{r message=FALSE}
-aldex.tt <- aldex(otu_table(ps) %>% t, sam$Group,
-                  test="t", verbose=FALSE, paired.test=TRUE,
-                  effect=TRUE , mc.samples = 128, denom = "all", useMC = TRUE) %>%
-    as_tibble(rownames = "Taxon")
-aldex.plot(aldex.tt, type = "MW", test = "wilcox")
-sig <- aldex.tt$we.ep < 0.1 # p-value of welch's t test 
-points(aldex.tt$diff.win[sig],aldex.tt$diff.btw[sig], col="blue")
-aldex.tt%>%
-    left_join(tax, by = "Taxon") %>%
-    filter(we.ep < 0.1) %>% 
-    dplyr::select(Taxon, effect, starts_with("w"), Phylum, Genus)
-```
-
-```{r include=FALSE}
-top_hits <- aldex.tt %>%
-    left_join(tax, by = "Taxon") %>%
-    group_by(sign(effect)) %>%
-    top_n(15, abs(effect)) %>%
-    ungroup %>%
-    left_join(tax) %>%
-    dplyr::select(Taxon, effect, starts_with("w"), Phylum, Genus) %>%
-    arrange(-sign(effect), -abs(effect))
-top_hits 
-```
-
-## Pairwise t-test
-
-Are we too conservative? Here we conduct a t-test not by ALDEx2. In this case, we convert our data into proportion.
+The design of this study is paired by household, and we want use t-test to compare dogs within households. Here we check if the data is really paired.
 
 ```{r}
-# ttest
-otu.prop.group <- data.frame(Group = factor(sam$Group),Household = sam$Household, otu_table(ps.prop)) %>% 
-    gather(key = 'Taxon', value = 'proportion', starts_with('ASV')) %>% 
-    group_by(Taxon)
-
-ptt <- otu.prop.group %>% 
-    pairwise_t_test(
-        proportion ~ Group, paired = TRUE,
-        p.adjust.method = "BH"
-    ) %>%
-    left_join(tax, by = "Taxon") %>% 
-    select(-.y.,-df, -statistic, -Kingdom, -Class, -Order, -Family, -Species) %>%
-    filter(p.adj.signif != 'ns') %>% 
-    # filter(p <= 0.1) %>% 
-     arrange(str_rank(Taxon, numeric = T))
-ptt
-
-otu.prop.group %>%
-    left_join(tax, by = "Taxon") %>% 
-    filter(Taxon %in% ptt$Taxon) %>% 
-    ggplot(aes(proportion,Group, color = Group)) +
-    geom_boxplot() +
-    facet_grid(Taxon+Genus~.) +
-    theme(strip.text.y = element_text(angle = 0))
-```
-
-## Genus level
-
-If we look at them in Genus level, not in ASV level?
-
-```{r message=FALSE}
-ps.genus <- tax_glom(ps, 'Genus')
-aldex.tt <- aldex(otu_table(ps.genus) %>% t, sam$Group,
-                  test="t", verbose=FALSE, paired.test=TRUE,
-                  effect=TRUE , mc.samples = 128, denom = "all", useMC = TRUE) %>%
-    as_tibble(rownames = "Taxon")
-aldex.plot(aldex.tt, type = "MW", test = "wilcox")
-sig <- aldex.tt$we.ep < 0.1 # p-value of welch's t test 
-points(aldex.tt$diff.win[sig],aldex.tt$diff.btw[sig], col="blue")
-aldex.tt%>%
-    left_join(tax, by = "Taxon") %>%
-    filter(we.ep < 0.2) %>% 
-    dplyr::select(Taxon, effect, starts_with("w"), Phylum, Genus)
-```
-
-# Lactobacillus and Helicobacter
-
-Lactobacillus and helicobacter are two genus that we are interested in. From the results above, we didn't find them to be significant. Here we want to look at how their data are distributed.
-
-```{r message=FALSE}
-ps.interest <- subset_taxa(ps.prop, Genus %in% c('Lactobacillus', 'Helicobacter'))
-otu.interest <- otu_table(ps.interest)
-genus.interest <- data.frame(tax_table(ps.interest))$Genus
-otu.prop.interest <- data.frame(Group = factor(sam$Group),
-                                Household = sam$Household,
-                                otu.interest) %>% 
-    gather(key = 'Taxon', value = 'proportion', starts_with('ASV')) %>% 
-    mutate(TH = str_c(Taxon, Household, sep = '_')) %>% 
-    mutate(Genus = tax_table(ps.interest)[Taxon, 'Genus'])
-
-ggplot(data = otu.prop.interest,
-       aes(x = Group, y = proportion, group = TH, color = Household)) +
-    geom_point() +
-    geom_line() +
-    facet_wrap(~Genus, scales = 'free_y')
-```
-
-Here we see both genus have small difference
-
-```{r message=FALSE}
-ggplot(data = otu.prop.interest) +
-    geom_histogram(aes(proportion)) +
-    facet_wrap(~Genus, scales = 'free_y')
+# check if data are paired
+if (!identical(sample_data(ps)$Household[seq(1,102,2)],
+               sample_data(ps)$Household[seq(1,102,2)+1])) stop('data is not paired')
+if (!identical(sample_data(ps.rare)$Household[seq(1,98,2)],
+               sample_data(ps.rare)$Household[seq(1,98,2)+1])) stop('rarefied data is not paired')
 ```
 
 
-# Effect of Drug
+## ALDEx2 pairwise T-test
 
-```{r message=FALSE}
-# change only for epi dogs
-ps.epi <- ps %>% subset_samples(Epileptic.or.Control == "Epileptic")
-aldex.tt <- aldex(otu_table(ps.epi) %>% t, sample_data(ps.epi)$Pheno.Y.N,
-                  test="t", verbose=FALSE, paired.test=FALSE,
-                  effect=TRUE , mc.samples = 128, denom = "all", useMC = TRUE) %>%
-    as_tibble(rownames = "Taxon")
-aldex.plot(aldex.tt, type = "MW", test = "wilcox")
-sig <- aldex.tt$we.ep < 0.1 # p-value of welch's t test 
-points(aldex.tt$diff.win[sig],aldex.tt$diff.btw[sig], col="blue")
-aldex.tt%>%
-    left_join(tax, by = "Taxon") %>%
-    filter(we.ep < 0.1) %>% 
-    dplyr::select(Taxon, effect, starts_with("w"), Phylum, Genus)
+```{r}
+# aldex pairwise t test
+# central log ratio transformed data
+x <- aldex.clr(t(otu_table(ps)), sample_data(ps)$Epileptic.or.Control, mc.samples=128, denom="all", useMC = TRUE)
+aldex.tt <- aldex.ttest(x, paired.test = TRUE)
+aldex.tt.res <- aldex.tt[aldex.tt$we.ep < alpha,] %>% 
+    rownames_to_column('taxon')
+tax[aldex.tt.res$taxon,] %>% 
+    data.frame() %>% 
+    dplyr::select(Phylum, Genus) %>% 
+    rownames_to_column('taxon') %>% 
+    arrange(str_rank(taxon, numeric = TRUE))
 ```
 
-```{r message=FALSE}
-mm <- model.matrix( ~ Group + Pheno.Y.N + State.Infor,  sam)
-x <- aldex.clr(otu_table(ps) %>% t, 
-    mm, mc.samples = 128, denom = "all", useMC = TRUE)
-glm.test <- aldex.glm(x, mm)
-glm.effect <- aldex.glm.effect(x, useMC = TRUE)
+## regular pairwise T-test on rarefied data
+
+```{r}
+paired.data <- bind_cols(data.frame(sample_data(ps.rare)),
+                         data.frame(otu_table(ps.rare)))
+pair.t.test <- function(ASV, group = 'Epileptic.or.Control', data = paired.data) {
+    formula <- as.formula(str_c(ASV, '~', group, sep = ' '))
+    result <- pairwise_t_test(formula, data = data, paired = TRUE)
+    p.value <- result$p
+    return(p.value)
+}
+paired.tt <- future_sapply(taxa_names(ps.rare), pair.t.test)
+
+paired.tt.res <- paired.tt[which(paired.tt < alpha)] %>% 
+    data.frame() %>% 
+    rownames_to_column('taxon')
+tax[paired.tt.res$taxon,] %>% 
+    data.frame() %>% 
+    dplyr::select(Phylum, Genus) %>% 
+    rownames_to_column('taxon') %>% 
+    arrange(str_rank(taxon, numeric = TRUE))
+```
+
+# Differential Abundance Test With GLM
+
+We have found that the `Household` could be a strong factor that affect dogs' microbiome. To remove the effect of `Household` we propose this model:
+
+$$ASV_i \sim Epileptic.or.Control + Household$$
+
+## ALDEx2 GLM
+
+```{r}
+# Construct model matrix
+model <- model.matrix(~ Epileptic.or.Control + Household, data.frame(sample_data(ps)))
+
+# Perform CLR transformation and Monte Carlo sampling
+x <- aldex.clr(t(otu_table(ps)), model, mc.samples=128, denom="all", useMC = TRUE, verbose = FALSE)
+aldex.glm <- aldex.glm(x, model)
 ```
 
 ```{r}
-sig <- glm.test$`GroupB:pval` < 0.1
-aldex.plot(glm.effect[["GroupB"]], test="effect")
-points(glm.effect[["GroupB"]]$diff.win[sig],
-    glm.effect[["GroupB"]]$diff.btw[sig], col="blue")
-glm.test[sig,] %>%
-    rownames_to_column('Taxon') %>%
-    as_tibble() %>%
-    left_join(tax, by = 'Taxon') %>% 
-    dplyr::select('Taxon',ends_with('pval'), 'Phylum', 'Genus')
+aldex.glm.res <- aldex.glm[aldex.glm$`Epileptic.or.ControlEpileptic:pval` < alpha,] %>% 
+    rownames_to_column('taxon')
+tax[aldex.glm.res$taxon,] %>% 
+    data.frame() %>% 
+    dplyr::select(Phylum, Genus) %>% 
+    rownames_to_column('taxon') %>% 
+    arrange(str_rank(taxon, numeric = TRUE))
 ```
 
-# Pilot study data
+## ANCOMBC
+
+```{r, message=FALSE}
+ancombc.da <- ancombc(data = ps,
+                      formula = 'Epileptic.or.Control + Household',
+                      n_cl = max.cores)
+```
 
 ```{r}
-path <- here('Rdata','pilot_study')
-ps.pilot <- readRDS(here(path,'ps.rds')) %>% filter_taxa(filt_fun, prune = TRUE)
-tax <- tax_table(ps.pilot) %>% data.frame() %>% rownames_to_column('Taxon') %>% as_tibble
+ancombc.res <- ancombc.da$res$p_val %>% 
+    filter(Epileptic.or.ControlEpileptic < alpha) 
+
+tax_table(ps)[ancombc.res$taxon,] %>% 
+    data.frame() %>% 
+    dplyr::select(Phylum, Genus) %>% 
+    rownames_to_column('taxon') %>% 
+    arrange(str_rank(taxon, numeric = TRUE))
+```
+
+## corncob
+
+```{r}
+corncob.da <- differentialTest(formula= ~ Epileptic.or.Control + Household,
+                              formula_null = ~ Household,
+                              phi.formula = ~ 1,
+                              phi.formula_null = ~ 1,
+                              taxa_are_rows = FALSE,
+                              test="Wald",
+                              data=ps,
+                              boot=FALSE)
+```
+
+```{r}
+corncob.res <- corncob.da$p[which(corncob.da$p < alpha)] %>% 
+    data.frame() %>% 
+    rownames_to_column('taxon')
+tax[corncob.res$taxon,] %>% 
+    data.frame() %>% 
+    dplyr::select(Phylum, Genus) %>% 
+    rownames_to_column('taxon') %>% 
+    arrange(str_rank(taxon, numeric = TRUE))
+```
+
+## LinDA
+
+```{r}
+linda.da <- linda(t(data.frame(otu_table(ps))),
+                   data.frame(sample_data(ps)),
+                   formula = '~ Epileptic.or.Control + Household',
+                   feature.dat.type = 'count',
+                   n.cores = max.cores,
+                   verbose = TRUE)
+
+```
+
+```{r}
+linda.res <- linda.da$output$Epileptic.or.ControlEpileptic %>% 
+    filter(pvalue < alpha) %>% 
+    rownames_to_column('taxon') %>% 
+    arrange(str_rank(taxon, numeric = TRUE))
+tax[linda.res$taxon,] %>% 
+    data.frame() %>% 
+    dplyr::select(Phylum, Genus) %>% 
+    rownames_to_column('taxon') %>% 
+    arrange(str_rank(taxon, numeric = TRUE))
+```
+
+# Summary
+
+```{r}
+summary.table <- data.frame(taxon = str_sort(taxa_names(ps), numeric = TRUE)) %>% 
+    mutate(aldex.t.test = taxon %in% aldex.tt.res$taxon) %>% 
+    mutate(paired.t.test = taxon %in% paired.tt.res$taxon) %>% 
+    mutate(aldex.glm = taxon %in% aldex.glm.res$taxon) %>% 
+    mutate(ANCOMBC = taxon %in% ancombc.res$taxon) %>% 
+    mutate(corncob = taxon %in% corncob.res$taxon) %>% 
+    mutate(LinDA = taxon %in% linda.res$taxon)
+keep <- which(rowSums(summary.table %>% dplyr::select(-taxon)) >= 3)
+summary.table[keep,]
 ```
 
 
-```{r message=FALSE}
-aldex.tt <- aldex(otu_table(ps.pilot) %>% t, sample_data(ps.pilot)$Group,
-                  test="t", verbose=FALSE, paired.test=TRUE,
-                  effect=TRUE , mc.samples = 128, denom = "all", useMC = TRUE) %>%
-    as_tibble(rownames = "Taxon")
-aldex.plot(aldex.tt, type = "MW", test = "wilcox")
-sig <- aldex.tt$we.ep < 0.2 # p-value of welch's t test 
-points(aldex.tt$diff.win[sig],aldex.tt$diff.btw[sig], col="blue")
-aldex.tt%>%
-    left_join(tax, by = "Taxon") %>%
-    filter(we.ep < 0.2) %>% 
-    dplyr::select(Taxon, effect, starts_with("w"), Phylum, Genus)
+```{r}
+sessionInfo()
 ```
+
