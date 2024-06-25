@@ -11,6 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r message=FALSE}
 rm(list = ls())
+set.seed(2024)
 library(tidyverse)
 library(readxl)
 library(here)
@@ -24,7 +25,7 @@ file <- 'Epilepsy study mapping file with patient info updated 1.22.24 for micro
 meta_data <- read_excel(here('data', 'following_study', file), 
                         n_max = 118,
                         na = '.') %>%
-    arrange(str_rank(SampleID2, numeric = T))
+    arrange(str_rank(Household, numeric = T))
 # the sample id2 column was in float, we we change it to integer
 str(meta_data)
 meta_data$Household <- meta_data$Household %>% 
@@ -36,23 +37,30 @@ meta_data$`Zip Code` <- meta_data$`Zip Code` %>%
     str_remove('\\.0') %>%
     str_replace('O','0')
 # remove comments row in excel
-meta_data <- meta_data %>% select(-COMMENTS) %>% data.frame()
+meta_data <- meta_data %>% dplyr::select(-COMMENTS) %>% data.frame()
 # match sample name same as that in the asv table
 rownames(meta_data) <- 'Netti' %>%
     str_c(sprintf("%03d", as.integer(meta_data$SampleID2)))
 meta_data <- meta_data %>% add_column(study = 'following')
 ```
-
-Convert State to region
+Separate sex variable
 
 ```{r}
-state.region <- usa::states %>% 
-    select(name,region) %>%
-    column_to_rownames('name') %>% 
-    mutate(region = as.character(region))
-meta_data <- meta_data %>%
-    cbind(region = state.region[meta_data$State,])
+table(meta_data$Sex)
 ```
+
+```{r}
+meta_data <- meta_data %>%
+    separate(Sex, into = c("Sex", "Reproductive.Status"), sep = 1) %>% 
+    mutate(Spayed.or.Neutered = (Reproductive.Status != 'I'))
+```
+
+There are NAs in Pheno.Y.N. Here we fill NA with No, since those are dogs in control group
+
+```{r}
+meta_data$Pheno.Y.N[is.na(meta_data$Pheno.Y.N)] <- 'No'
+```
+
 
 # Integrate data with phyloseq
 
@@ -60,6 +68,8 @@ meta_data <- meta_data %>%
 st <- readRDS(here('data','following_study','st.rds'))
 taxa <- readRDS(here('data','following_study','taxsp.rds'))
 
+# match st order with metadata (since metadata is sorted by household)
+st <- st[meta_data$SampleID2,]
 if(!identical(nrow(meta_data), nrow(st))) stop('meta data does not match with sequence table')
 if(!identical(rownames(meta_data), rownames(st))) stop('rownames in meta data does not match with sequence table')
 # create a phyloseq object
@@ -71,7 +81,7 @@ ps <- phyloseq(sample_data(meta_data),
 seqs <- Biostrings::DNAStringSet(taxa_names(ps))
 names(seqs) <- taxa_names(ps)
 ps <- merge_phyloseq(ps, seqs)
-taxa_names(ps) <- paste0("ASV", seq(ntaxa(ps))) # here we store 
+taxa_names(ps) <- paste0("ASV", seq(ntaxa(ps))) 
 ```
 
 # Quality Assurance
@@ -93,8 +103,8 @@ For household 52
 sample 106,107,108 are duplicates of sample 103. sample 105 is the duplicate of sample 104.
 
 ```{r}
-rowSums(st)[c(103,106,107,108)] %>% sort()
-rowSums(st)[c(104,105)] %>% sort()
+rowSums(st)[str_c('Netti',c('103','106','107','108'))] %>% sort()
+rowSums(st)[str_c('Netti',c('104','105'))] %>% sort()
 ```
 
 Here we can keep sample 103 since it has more reads.
@@ -104,8 +114,8 @@ For household 54
 sample 63,113,115 are duplicates of sample 114. sample 64,117,118 are duplicates of sample 116.
 
 ```{r}
-rowSums(st)[c(63,113,114,115)] %>% sort()
-rowSums(st)[c(64,116,117,118)] %>% sort()
+rowSums(st)[str_c('Netti',c('063','113','114','115'))] %>% sort()
+rowSums(st)[str_c('Netti',c('064','116','117','118'))] %>% sort()
 ```
 
 Here we can keep the sample with most reads (sample 64 and 114)
@@ -124,46 +134,59 @@ ps <- ps %>%
 For households that have more than two samples, we will remove the exceed samples and make them into pairs.
 
 ```{r}
-table(sample_data(ps)$Household)
+n.samples <- table(sample_data(ps)$Household)
+n.samples[n.samples != 2]
 ```
 
 There are 4 dogs in household 17, 18, and 26.
 
 ```{r}
-sample_data(ps) %>% data.frame() %>% 
+exceed.samples <- sample_data(ps) %>%
+    data.frame() %>% 
     filter(Household %in% c(17,18,26)) %>%
     arrange(Household) %>%
-    select(SampleID2, Household, Epileptic.or.Control)
+    dplyr::select(SampleID2, Household, Epileptic.or.Control)
+exceed.samples
 ```
+
+Take a look at the sequencing depth of these samples
+
+```{r}
+rowSums(st)[exceed.samples$SampleID2]
+```
+
 
 Remove exceeded samples to make a paired data.
 
 ```{r}
-remove.list <- c(39,79,111,112,49,50,37,38)
+remove.list <- c(110,111,9,10,37,38)
 ps <- ps %>% 
     subset_samples(!(SampleID2 %in% remove.list))
 ps
 ```
 
-Now we have 100 samples (data are paired within 50 households)
+Now we have 102 samples (data are paired within 51 households)
 
 # Align Sequences
 
-```{r eval=FALSE}
+```{r, eval = FALSE}
 alignment <- DECIPHER::AlignSeqs(refseq(ps), anchor=NA)
 alignment.file <- here('data', 'following_study', 'msa.fasta')
-writeXStringSet(alignment, alignment.file)
+Biostrings::writeXStringSet(alignment, alignment.file)
 ```
 
 Here we use `raxml-ng` to find the best tree of the alignment
 
 ```{bash, eval = FALSE}
-raxml-ng --msa data/following_study/msa.fasta --model GTR+G --prefix data/following_study/tree
+raxml-ng --msa data/following_study/msa.fasta --model GTR+G --prefix data/following_study/tree --seed 2024
 ```
 
 ```{r}
 best.tree <- read_tree(here('data','following_study','tree.raxml.bestTree'))
 ps <- merge_phyloseq(ps, phy_tree(best.tree))
+# order phyloseq data by household
+# ps <- microViz::ps_arrange(ps, str_rank(Household, numeric = TRUE))
+if (!identical(rownames(otu_table(ps)), rownames(sample_data(ps)))) stop('sample names are not matched!')
 ```
 
 # Rarefied Data
@@ -178,13 +201,22 @@ sample_sums(ps) %>% sort() %>% head()
 
 Here, we see most of sample has sequencing depth greater than 40000, we can bring all the samples to this sequencing depth level, and drop the two samples (Netti040 and Netti080) that have low sequencing depth.
 
+
 ```{r message=FALSE}
 # make read depth even
-ps.rarefied <- rarefy_even_depth(ps, sample.size = 40000)
+ps.rarefied <- rarefy_even_depth(ps, sample.size = 44590)
 ps.rarefied
 ```
 
 Two samples are lost after rarefying. Now we have 98 samples.
+
+```{r message=FALSE}
+house.rm <- meta_data[c('Netti040','Netti080'),'Household']
+house.rm
+ps.rarefied <- ps.rarefied %>% 
+    subset_samples(!(Household %in% house.rm))
+ps.rarefied
+```
 
 # Save Data
 
