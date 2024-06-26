@@ -24,12 +24,12 @@ ps <- readRDS(here('data','following_study','ps_rarefied.rds')) %>%
     filter_taxa(filt_fun, prune = TRUE) 
 sample_data(ps)[is.na(sample_data(ps))] <- 'NA'
 sam <- data.frame(sample_data(ps))
+max.core <- parallel::detectCores()
 ```
 
 # Alpha Diversity
 
 ```{r}
-alpha.diversity <- estimate_richness(ps)
 plot_richness(ps, measures = 'Shannon',x = 'Epileptic.or.Control') +
     geom_boxplot()
 ```
@@ -37,6 +37,15 @@ plot_richness(ps, measures = 'Shannon',x = 'Epileptic.or.Control') +
 ```{r}
 plot_richness(ps, measures = 'Shannon',x = 'Breed.Group..1.') +
     geom_boxplot()
+```
+
+```{r}
+alpha.diversity <- estimate_richness(ps) %>%
+    cbind(sample_data(ps)) %>% 
+    cbind(read_depth = rowSums(otu_table(ps)))
+
+ggplot(alpha.diversity) +
+    geom_point(aes(x = read_depth, y = Shannon, colour = Breed.Group..1.))
 ```
 
 
@@ -59,7 +68,7 @@ Some of the taxa have extremely long branch. Are they influential?
 # Warning: Not all nodes are descendants in this tree
 if (require(adephylo)) {dist.root <- adephylo::distRoot(phy_tree(ps))}
 hist(dist.root); dist.root %>% sort(decreasing = TRUE) %>% head(20)
-detach('package:adephylo', character.only = TRUE, unload = TRUE)
+detach('package:adephylo', character.only = TRUE, unload = TRUE, force = TRUE)
 ```
 
 Let's see which ASV has distance from root longer than 10.
@@ -82,111 +91,199 @@ Result returned from BLAST (web interface):
 | ASV601 | Anaerobutyricum hallii | 95.1 |
 | ASV438 | uncultured Blautia sp. | 97.3 |
 
-```{r}
-pwalign::stringDist(refseq(ps)[names(long.branch)])
-```
+Now we remove this outlier ASVs
 
-Now we remove these outlier ASVs
-
-```{r}
+```{r, message=FALSE}
 all.taxa <- taxa_names(ps)
 keep.taxa <- all.taxa[!(all.taxa %in% names(long.branch))]
 ps.sub <- ps %>% prune_taxa(keep.taxa, .)
 ```
 
+Convert ps.sub to proportion
+
+```{r, message=FALSE}
+ps.sub <- ps.sub %>% transform_sample_counts(function(x) x / sum(x))
+sample_sums(ps.sub) %>% summary()
+```
+
+
 # Test for Effect
 
 ```{r}
-plot_ord <- function(data, factor, method, distance, strata = NULL){
+plot_ord <- function(data, factor, method, distance){
     data.ord <- ordinate(data, method = method, distance = distance)
     p <- plot_ordination(data, data.ord, color = factor)
     p <- p + stat_ellipse(type = "t",geom = "polygon",alpha = 0)
-
-    dist.matrix <- phyloseq::distance(data, method=distance)
-    model <- as.formula(paste0('dist.matrix ~ ', factor))
-    sam <- data.frame(sample_data(data))
-    if (is.null(strata) == FALSE){strata.variable <- sam[,strata]} else {strata.variable <- NULL}
-    permanova <- adonis2(model, data = sam, permutations=1e4, parallel = parallel::detectCores(), strata = strata.variable)
-    p <- p + ggtitle(str_c(factor,method,distance, sep = ' - '),
-                     subtitle = str_c('p = ', permanova$`Pr(>F)`, '\n',
-                                      'R2 = ', permanova$R2))
+    p <- p + ggtitle(str_c(factor,method,distance, sep = ' - '))
     print(p)
 }
-
+permanova <- function(data, formula, method, permutations=1e4, strata = NULL, core = max.core){
+    dist.matrix <- phyloseq::distance(data, method=method)
+    df <- data.frame(sample_data(data))
+    model <- as.formula(paste0('dist.matrix~', formula))
+    if (!is_null(strata)) {strata <- df[,strata]}
+    result <- adonis2(model,
+                      data = df,
+                      permutations=permutations,
+                      strata = strata,
+                      parallel = core)
+    return(result)
+}
+permdisp <- function(data, group, method, permutations=1e4, pairwise = FALSE, core = max.core){
+    dist.matrix <- phyloseq::distance(data, method=method)
+    df <- data.frame(sample_data(data))
+    beta.disp <- betadisper(dist.matrix, group = df[,group])
+    result <- permutest(beta.disp, permutations = permutations, pairwise = pairwise, type = 'centroid')
+    return(result)
+}
 ```
 
 
 ## Household Effect
 
 ```{r}
-dist.matrix <- phyloseq::distance(ps.sub, method='bray')
-adonis2(dist.matrix~Household,
-        data = data.frame(sample_data(ps.sub)),
-        permutations=1e4,
-        parallel = parallel::detectCores())
+permanova(ps.sub, 'Household', 'bray')
+```
+
+## Epileptic Effect
+
+### Ordination
+
+```{r}
+plot_ord(ps.sub, 'Epileptic.or.Control','MDS','bray')
+plot_ord(ps.sub, 'Epileptic.or.Control','MDS','wunifrac')
+plot_ord(ps.sub, 'Epileptic.or.Control','NMDS','bray')
+plot_ord(ps.sub, 'Epileptic.or.Control','NMDS','wunifrac')
+```
+
+### PERMANOVA Test
+
+```{r}
+permanova(ps.sub, 'Epileptic.or.Control', 'bray', strata = 'Household')
+permanova(ps.sub, 'Epileptic.or.Control', 'wunifrac', strata = 'Household')
+```
+
+### PERMDISP
+
+```{r}
+permdisp(ps.sub, 'Epileptic.or.Control', 'bray')
+permdisp(ps.sub, 'Epileptic.or.Control', 'wunifrac')
 ```
 
 ## Breed Effect
 
-```{r}
-plot_ord(ps.sub, 'Breed.Group..1.','MDS','bray', strata = 'Household')
-plot_ord(ps.sub, 'Breed.Group..1.','MDS','wunifrac', strata = 'Household')
-plot_ord(ps.sub, 'Breed.Group..1.','NMDS','bray', strata = 'Household')
-plot_ord(ps.sub, 'Breed.Group..1.','NMDS','wunifrac', strata = 'Household')
-```
-
-The Breed Group has a significant effect.
-
-
-## Sex Effect
+a table of # of breed. frequency table
 
 ```{r}
-plot_ord(ps.sub, 'Sex','MDS','bray')
-plot_ord(ps.sub, 'Sex','MDS','wunifrac')
-plot_ord(ps.sub, 'Sex','NMDS','bray')
-plot_ord(ps.sub, 'Sex','NMDS','wunifrac')
+(data.frame(sample_data(ps.sub))$Breed.Group..1.) %>% table()
 ```
 
-## Spayed or Neutered Effect
 
 ```{r}
-plot_ord(ps.sub, 'Spayed.or.Neutered','MDS','bray')
-plot_ord(ps.sub, 'Spayed.or.Neutered','MDS','wunifrac')
-plot_ord(ps.sub, 'Spayed.or.Neutered','NMDS','bray')
-plot_ord(ps.sub, 'Spayed.or.Neutered','NMDS','wunifrac')
+plot_ord(ps.sub, 'Breed.Group..1.','MDS','bray')
+plot_ord(ps.sub, 'Breed.Group..1.','MDS','wunifrac')
+plot_ord(ps.sub, 'Breed.Group..1.','NMDS','bray')
+plot_ord(ps.sub, 'Breed.Group..1.','NMDS','wunifrac')
 ```
 
+### PERMANOVA
+
+```{r}
+# same breed group v.s. diff breed group in household
+# check if data are paired within household
+if (!identical(sample_data(ps)$Household[seq(1,98,2)],
+               sample_data(ps)$Household[seq(1,98,2)+1])) stop('data is not paired')
+
+same.breed.group <- table(sample_data(ps)$Household, sample_data(ps)$Breed.Group..1.) %>% 
+    apply(1, function(x) any(x == 2)) # if dog's grouping are same with in each house
+same.breed.group;sum(same.breed.group)
+```
+
+Here we see 39 out of 49 household have dogs in same breed group
+
+```{r}
+permanova(ps.sub, 'Household + Breed.Group..1.', 'bray')
+permanova(ps.sub, 'Household + Breed.Group..1.', 'wunifrac')
+```
+
+
+### PERMANOVA Test by Epileptic and Control Group
+
+Here we 
+
+```{r message=FALSE}
+ps.control <- ps.sub %>% subset_samples(Epileptic.or.Control == 'Control')
+ps.epileptic <- ps.sub %>% subset_samples(Epileptic.or.Control == 'Epileptic')
+```
+
+```{r}
+perm.breed.bray.ctl <- permanova(ps.control, 'Breed.Group..1.', 'bray')
+perm.breed.wunif.ctl <- permanova(ps.control, 'Breed.Group..1.', 'wunifrac')
+perm.breed.bray.ctl;perm.breed.wunif.ctl
+```
+
+```{r}
+perm.breed.bray.epi <- permanova(ps.epileptic, 'Breed.Group..1.', 'bray')
+perm.breed.wunif.epi <- permanova(ps.epileptic, 'Breed.Group..1.', 'wunifrac')
+perm.breed.bray.epi;perm.breed.wunif.epi
+```
+
+### Combined p value
+
+$$X^2=-2 \sum_{i=1}^k \ln \left(p_i\right)$$
+
+
+```{r}
+bray.p <- c(perm.breed.bray.ctl$`Pr(>F)`[1], perm.breed.bray.epi$`Pr(>F)`[1])
+# Calculate the combined p-value with fisher's method
+pchisq( -2 * sum(log(bray.p)), df = 4, lower.tail = FALSE)
+
+wunif.p <- c(perm.breed.wunif.ctl$`Pr(>F)`[1], perm.breed.wunif.epi$`Pr(>F)`[1])
+# Calculate the combined p-value with fisher's method
+pchisq( -2 * sum(log(wunif.p)), df = 4, lower.tail = FALSE)
+```
+
+With using the `weighted-unifrac` distance, there's at least one of the null hypothesis is rejected.
 
 ## Drug Effect
 
 Here we are only focusing on epileptic dogs.
 
 ```{r}
-ps.sub.epi <- ps.sub %>% 
-    subset_samples(Epileptic.or.Control == 'Epileptic')
-plot_ord(ps.sub.epi, 'Pheno.Y.N','MDS','bray')
-plot_ord(ps.sub.epi, 'Pheno.Y.N','MDS','wunifrac')
-plot_ord(ps.sub.epi, 'Pheno.Y.N','NMDS','bray')
-plot_ord(ps.sub.epi, 'Pheno.Y.N','NMDS','wunifrac')
+plot_ord(ps.epileptic, 'Pheno.Y.N','MDS','bray')
+plot_ord(ps.epileptic, 'Pheno.Y.N','MDS','wunifrac')
+plot_ord(ps.epileptic, 'Pheno.Y.N','NMDS','bray')
+plot_ord(ps.epileptic, 'Pheno.Y.N','NMDS','wunifrac')
 ```
 
-Drug usage does not seem like a significant factor.
-
-
-# Age Effect
+### PERMANOVA
 
 ```{r}
-ps.age <- ps.sub %>% 
-    subset_samples(Age..months. != 'NA')
-sample_data(ps.age)$Age..months. <- sample_data(ps.age)$Age..months. %>% 
-    as.numeric()
-ps.age # two samples does not contain age information
-dist.matrix <- phyloseq::distance(ps.age, method='bray')
-sam.age <- sample_data(ps.age) %>% data.frame()
-adonis2(dist.matrix~Age..months., data = sam.age, permutations=1e4, strata = sam.age$Household)
+permanova(ps.epileptic, 'Pheno.Y.N','bray')
+permanova(ps.epileptic, 'Pheno.Y.N','wunifrac')
+```
+
+### Dispersion
+
+```{r}
+permdisp(ps.epileptic, 'Pheno.Y.N','bray')
+permdisp(ps.epileptic, 'Pheno.Y.N','wunifrac')
 ```
 
 ```{r}
-sessionInfo()
+# within epileptic dogs
+table(sample_data(ps)$Seizure.Freedom..Y.N., sample_data(ps)$Epileptic.or.Control)
+table(sample_data(ps)$Seizure.Control..Satisfactory.Unsatisfactory., sample_data(ps)$Epileptic.or.Control)
 ```
+
+Does health condition related to dog's sex? Here we conduct a Chi-squared test.
+
+```{r}
+# chisq test on epi male dog v.s. female.
+# not within health condition
+tb <- table(sample_data(ps)$Sex, sample_data(ps)$Epileptic.or.Control)
+tb
+chisq.test(tb)
+```
+
 
