@@ -30,22 +30,88 @@ max.core <- parallel::detectCores()
 # Alpha Diversity
 
 ```{r}
-plot_richness(ps, measures = 'Shannon',x = 'Epileptic.or.Control') +
-    geom_boxplot()
+alpha.diversity <- data.frame(sample_data(ps),estimate_richness(ps),read_depth = rowSums(otu_table(ps)))
+```
+
+## Household Effect
+
+```{r}
+ggplot(alpha.diversity,aes(x = Household, y = Shannon, group = Household)) +
+    geom_point() + geom_line()
 ```
 
 ```{r}
-plot_richness(ps, measures = 'Shannon',x = 'Breed.Group..1.') +
-    geom_boxplot()
+anova(lm(Shannon~Household, data = alpha.diversity))
 ```
 
-```{r}
-alpha.diversity <- estimate_richness(ps) %>%
-    cbind(sample_data(ps)) %>% 
-    cbind(read_depth = rowSums(otu_table(ps)))
+## Epileptic Effect
 
+```{r}
+ggplot(alpha.diversity,aes(x = Epileptic.or.Control, y = Shannon)) +
+    geom_boxplot() + geom_jitter(height = 0, width = 0.25)
+```
+
+Paired t test
+
+```{r}
+epileptic <- alpha.diversity %>% filter(Epileptic.or.Control == 'Epileptic')
+control <- alpha.diversity %>% filter(Epileptic.or.Control == 'Control')
+t.test(epileptic$Shannon, control$Shannon, paired = TRUE)
+```
+
+ANOVA with `Household` effect added
+
+```{r}
+anova(lm(Shannon~Household + Epileptic.or.Control, data = alpha.diversity))
+```
+
+## Breed Effect
+
+```{r}
 ggplot(alpha.diversity) +
-    geom_point(aes(x = read_depth, y = Shannon, colour = Breed.Group..1.))
+    geom_point(aes(x = Breed.Group..1., y = Shannon, colour = Breed.Group..1.)) +
+    facet_wrap(~Epileptic.or.Control) + 
+    theme(axis.text.x = element_blank(), axis.ticks.x.bottom = element_blank())
+```
+
+```{r}
+# here breed group with na is removed 
+anova(lm(Shannon~Household + Breed.Group..1., data = alpha.diversity %>% filter(Breed.Group..1. != 'NA')))
+```
+
+## Drug Effect
+
+```{r}
+alpha.diversity.epi <- alpha.diversity %>% filter(Epileptic.or.Control == 'Epileptic')
+ggplot(alpha.diversity.epi, aes(x = Pheno.Y.N, y = Shannon)) +
+    geom_boxplot() + geom_jitter(height = 0, width = 0.25)
+```
+
+```{r}
+t.test(Shannon~Pheno.Y.N, data = alpha.diversity.epi)
+```
+
+## Sex Effect
+
+```{r}
+ggplot(alpha.diversity, aes(x = Sex, y = Shannon)) +
+    geom_boxplot() + geom_jitter(height = 0, width = 0.25)
+```
+
+```{r}
+anova(lm(Shannon~Household + Sex, data = alpha.diversity))
+t.test(Shannon~Sex, data = alpha.diversity)
+```
+
+## Age Effect
+
+```{r}
+ggplot(alpha.diversity, aes(x = as.numeric(Age..months.), y = Shannon)) +
+    geom_point()
+```
+
+```{r}
+lm(Shannon~as.numeric(Age..months.), data = alpha.diversity) %>% summary()
 ```
 
 
@@ -86,10 +152,10 @@ dada2:::pfasta(refseq(ps)[names(long.branch)], ids = names(long.branch))
 
 Result returned from BLAST (web interface):
 
-| ASV | Taxonomy | % identity |
-| :---: | :---: | :---: |
-| ASV601 | Anaerobutyricum hallii | 95.1 |
-| ASV438 | uncultured Blautia sp. | 97.3 |
+|  ASV   |        Taxonomy        | \% identity |
+|:------:|:----------------------:|:-----------:|
+| ASV601 | Anaerobutyricum hallii |    95.1     |
+| ASV438 | uncultured Blautia sp. |    97.3     |
 
 Now we remove this outlier ASVs
 
@@ -105,7 +171,6 @@ Convert ps.sub to proportion
 ps.sub <- ps.sub %>% transform_sample_counts(function(x) x / sum(x))
 sample_sums(ps.sub) %>% summary()
 ```
-
 
 # Test for Effect
 
@@ -137,7 +202,6 @@ permdisp <- function(data, group, method, permutations=1e4, pairwise = FALSE, co
     return(result)
 }
 ```
-
 
 ## Household Effect
 
@@ -172,12 +236,11 @@ permdisp(ps.sub, 'Epileptic.or.Control', 'wunifrac')
 
 ## Breed Effect
 
-a table of # of breed. frequency table
+a table of \# of breed. frequency table
 
 ```{r}
 (data.frame(sample_data(ps.sub))$Breed.Group..1.) %>% table()
 ```
-
 
 ```{r}
 plot_ord(ps.sub, 'Breed.Group..1.','MDS','bray')
@@ -206,10 +269,9 @@ permanova(ps.sub, 'Household + Breed.Group..1.', 'bray')
 permanova(ps.sub, 'Household + Breed.Group..1.', 'wunifrac')
 ```
 
-
 ### PERMANOVA Test by Epileptic and Control Group
 
-Here we 
+Here we
 
 ```{r message=FALSE}
 ps.control <- ps.sub %>% subset_samples(Epileptic.or.Control == 'Control')
@@ -231,7 +293,6 @@ perm.breed.bray.epi;perm.breed.wunif.epi
 ### Combined p value
 
 $$X^2=-2 \sum_{i=1}^k \ln \left(p_i\right)$$
-
 
 ```{r}
 bray.p <- c(perm.breed.bray.ctl$`Pr(>F)`[1], perm.breed.bray.epi$`Pr(>F)`[1])
@@ -285,5 +346,3 @@ tb <- table(sample_data(ps)$Sex, sample_data(ps)$Epileptic.or.Control)
 tb
 chisq.test(tb)
 ```
-
-
