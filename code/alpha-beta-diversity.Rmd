@@ -337,6 +337,8 @@ table(sample_data(ps)$Seizure.Freedom..Y.N., sample_data(ps)$Epileptic.or.Contro
 table(sample_data(ps)$Seizure.Control..Satisfactory.Unsatisfactory., sample_data(ps)$Epileptic.or.Control)
 ```
 
+## Sex Effect
+
 Does health condition related to dog's sex? Here we conduct a Chi-squared test.
 
 ```{r}
@@ -345,4 +347,44 @@ Does health condition related to dog's sex? Here we conduct a Chi-squared test.
 tb <- table(sample_data(ps)$Sex, sample_data(ps)$Epileptic.or.Control)
 tb
 chisq.test(tb)
+```
+
+### Ordination
+
+```{r}
+plot_ord(ps, 'Sex','MDS','bray')
+plot_ord(ps, 'Sex','MDS','wunifrac')
+plot_ord(ps, 'Sex','NMDS','bray')
+plot_ord(ps, 'Sex','NMDS','wunifrac')
+```
+
+### PERMANOVA
+
+```{r}
+permanova(ps.sub, 'Household + Sex', 'bray')
+permanova(ps.sub, 'Household + Sex', 'wunifrac')
+```
+
+### PERMDISP
+
+```{r}
+permdisp(ps.sub, 'Sex', 'bray')
+permdisp(ps.sub, 'Sex', 'wunifrac')
+```
+
+## Age Effect
+
+```{r warning=FALSE}
+ggplot(sam) +
+    geom_line(aes(x = as.numeric(Household), y = as.numeric(Age..months.), group = Household)) + 
+    geom_point(aes(x = as.numeric(Household), y = as.numeric(Age..months.), colour = Epileptic.or.Control)) +
+    xlab('Household') + ylab('Age')
+```
+
+
+### PERMANOVA
+
+```{r}
+permanova(ps.sub, 'Household + Age..months.', 'bray')
+permanova(ps.sub, 'Household + Age..months.', 'wunifrac')
 ```
