@@ -29,7 +29,6 @@ ps.rare <- readRDS(here('data','following_study','ps_rarefied.rds')) %>%
 tax <- tax_table(ps)
 alpha <- 0.05
 max.cores <- parallel::detectCores()
-p.value.tb <- data.frame(taxon = taxa_names(ps))
 ps;ps.rare
 ```
 
@@ -56,18 +55,13 @@ x <- aldex.clr(t(otu_table(ps)), sample_data(ps)$Epileptic.or.Control, mc.sample
 aldex.tt <- aldex.ttest(x, paired.test = TRUE) %>% 
     cbind(aldex.effect(x, CI = TRUE, paired.test = TRUE)) %>% 
     rownames_to_column('taxon')
-aldex.tt.res <- aldex.tt[aldex.tt$we.ep < alpha,]
-tax[aldex.tt.res$taxon,] %>% 
+tax[aldex.tt$taxon,] %>% 
     data.frame() %>% 
     dplyr::select(Phylum, Genus) %>% 
-    cbind(log2fold = aldex.tt.res$diff.btw,
-          p = aldex.tt.res$we.ep) %>% 
+    cbind(log2fold = aldex.tt$diff.btw,
+          p = aldex.tt$we.ep) %>% 
     rownames_to_column('taxon') -> aldex.tt.res
-gt(aldex.tt.res)
-p.value.tb <- p.value.tb %>% 
-    full_join(aldex.tt, by = 'taxon') %>% 
-    mutate(aldex.tt = we.ep) %>% 
-    dplyr::select(taxon,aldex.tt)
+aldex.tt.res %>% filter(p <= alpha) %>% gt()
 ```
 
 ## regular pairwise T-test on rarefied data
@@ -93,17 +87,14 @@ paired.tt <- t(sapply(taxa_names(ps.rare), pair.t.test)) %>%
     rownames_to_column('taxon')
 colnames(paired.tt)[2:3] <- c('log2fold', 'paired.tt')
 
-paired.tt.res <- paired.tt[paired.tt$paired.tt < alpha,]
-tax[paired.tt.res$taxon,] %>% 
+tax[paired.tt$taxon,] %>% 
     data.frame() %>% 
     dplyr::select(Phylum, Genus) %>% 
-    cbind(log2fold = paired.tt.res$log2fold, p = paired.tt.res$paired.tt) %>% 
+    cbind(log2fold = paired.tt$log2fold, p = paired.tt$paired.tt) %>% 
     rownames_to_column('taxon') %>% 
     arrange(str_rank(taxon, numeric = TRUE)) -> paired.tt.res
-gt(paired.tt.res)
-p.value.tb <- p.value.tb %>% 
-    full_join(paired.tt, by = 'taxon') %>% 
-    dplyr::select(taxon, aldex.tt, paired.tt)
+
+paired.tt.res %>% filter(p <= alpha) %>% gt()
 ```
 
 # Differential Abundance Test With GLM
@@ -126,20 +117,15 @@ aldex.glm <- aldex.glm(x, model) %>%
 ```
 
 ```{r}
-aldex.glm.res <- aldex.glm[aldex.glm$`Epileptic.or.ControlEpileptic:pval` < alpha,] 
-tax[aldex.glm.res$taxon,] %>% 
+
+tax[aldex.glm$taxon,] %>% 
     data.frame() %>% 
     dplyr::select(Phylum, Genus) %>% 
-    cbind(log2fold = aldex.glm.res$Epileptic.or.ControlEpileptic.diff.btw,
-          p = aldex.glm.res$`Epileptic.or.ControlEpileptic:pval`) %>% 
+    cbind(log2fold = aldex.glm$Epileptic.or.ControlEpileptic.diff.btw,
+          p = aldex.glm$`Epileptic.or.ControlEpileptic:pval`) %>% 
     rownames_to_column('taxon') %>% 
     arrange(str_rank(taxon, numeric = TRUE)) -> aldex.glm.res
-gt(aldex.glm.res)
-
-p.value.tb <- p.value.tb %>% 
-    full_join(aldex.glm %>% dplyr::select(taxon,`Epileptic.or.ControlEpileptic:pval`), by = 'taxon') %>% 
-    rename(aldex.glm = `Epileptic.or.ControlEpileptic:pval`)
-    
+aldex.glm.res %>% filter(p <= alpha) %>% gt()
 ```
 
 ## ANCOMBC
@@ -151,24 +137,16 @@ ancombc.da <- ancombc(data = ps,
 ```
 
 ```{r}
-ancombc.res <- ancombc.da$res$p_val %>% 
-    filter(Epileptic.or.ControlEpileptic < alpha) 
-
-tax_table(ps)[ancombc.res$taxon,] %>% 
+tax_table(ps)[ancombc.da$res$p_val$taxon,] %>% 
     data.frame() %>% 
     rownames_to_column('taxon') %>% 
-    #arrange(str_rank(taxon, numeric = TRUE)) %>% 
     left_join(ancombc.da$res$lfc, by = 'taxon') %>% 
     mutate(log2fold = log2(exp(Epileptic.or.ControlEpileptic))) %>% # convert natural log to log2
     dplyr::select(taxon,Phylum, Genus, log2fold) %>% 
     left_join(ancombc.da$res$p_val, by = 'taxon') %>% 
     mutate(p = Epileptic.or.ControlEpileptic) %>% 
     dplyr::select(taxon,Phylum, Genus, log2fold,p) -> ancombc.res
-gt(ancombc.res)
-
-p.value.tb <- p.value.tb %>% 
-    full_join(ancombc.da$res$p_val %>% dplyr::select(taxon,Epileptic.or.ControlEpileptic), by = 'taxon') %>% 
-    rename(ancombc = Epileptic.or.ControlEpileptic)
+ancombc.res %>% filter(p <= alpha) %>% gt()
 ```
 
 ## corncob
@@ -185,7 +163,7 @@ corncob.da <- differentialTest(formula= ~ Epileptic.or.Control + Household,
 
 ```{r}
 # convert corcob result to log2fold difference
-corncob.summary <- function(corncob.da, i) {
+corncob.extract.result <- function(corncob.da, i) {
     regression.result <- corncob.da$all_models[[i]]$coefficients
     ps <- corncob.da$data
     read.depth <- rowSums(otu_table(ps))
@@ -203,7 +181,7 @@ corncob.summary <- function(corncob.da, i) {
     summary <- c(log2fold,ra.diff,p)
     return(summary)
 }
-corncob.sum.tb <- sapply(1:length(taxa_names(ps)), function(i) corncob.summary(corncob.da, i)) %>% t() %>% data.frame()
+corncob.sum.tb <- sapply(1:length(taxa_names(ps)), function(i) corncob.extract.result(corncob.da, i)) %>% t() %>% data.frame()
 rownames(corncob.sum.tb) <- taxa_names(ps)
 colnames(corncob.sum.tb) <- c('log2fold','ra.diff','p')
 ```
@@ -212,13 +190,10 @@ colnames(corncob.sum.tb) <- c('log2fold','ra.diff','p')
 ```{r}
 corncob.taxa <- names(corncob.da$p[which(corncob.da$p < alpha)])
 # p value in the table is term specific, but significance is determined by wald test
-corncob.res <- data.frame(tax[,c(2,6)], corncob.sum.tb)[corncob.taxa,] %>% rownames_to_column('taxon')
-gt(corncob.res)
-
-p.value.tb <- p.value.tb %>% 
-    full_join(corncob.sum.tb %>% rownames_to_column('taxon'), by = 'taxon') %>% 
-    rename(corncob = p) %>% 
-    dplyr::select(-c(log2fold, ra.diff))
+corncob.res <- data.frame(tax[,c(2,6)], corncob.sum.tb) %>%
+    rownames_to_column('taxon') %>% 
+    cbind(wald.p = corncob.da$p)
+corncob.res %>% filter(taxon %in% corncob.taxa) %>% gt()
 ```
 
 ## LinDA
@@ -234,7 +209,6 @@ linda.da <- linda(t(data.frame(otu_table(ps))),
 
 ```{r}
 linda.res <- linda.da$output$Epileptic.or.ControlEpileptic %>% 
-    filter(pvalue < alpha) %>% 
     rownames_to_column('taxon') %>% 
     arrange(str_rank(taxon, numeric = TRUE))
 tax[linda.res$taxon,] %>% 
@@ -242,52 +216,71 @@ tax[linda.res$taxon,] %>%
     dplyr::select(Phylum, Genus) %>% 
     cbind(log2fold = linda.res$log2FoldChange, p = linda.res$pvalue) %>% 
     rownames_to_column('taxon') -> linda.res
-gt(linda.res)
-p.value.tb <- p.value.tb %>% 
-    full_join(linda.da$output$Epileptic.or.ControlEpileptic %>%
-                  rownames_to_column('taxon') %>% 
-                  dplyr::select(taxon,pvalue), by = 'taxon') %>% 
-    rename(linda = pvalue)
+linda.res %>% filter(p <= alpha) %>% gt()
 ```
 
 # Summary
 
 ```{r}
-summary.table <- data.frame(taxon = str_sort(taxa_names(ps), numeric = TRUE)) %>% 
-    mutate(aldex.t.test = taxon %in% aldex.tt.res$taxon) %>% 
-    mutate(paired.t.test = taxon %in% paired.tt.res$taxon) %>% 
-    mutate(aldex.glm = taxon %in% aldex.glm.res$taxon) %>% 
-    mutate(ANCOMBC = taxon %in% ancombc.res$taxon) %>% 
-    mutate(corncob = taxon %in% corncob.res$taxon) %>% 
-    mutate(LinDA = taxon %in% linda.res$taxon)
-keep <- which(rowSums(summary.table %>% dplyr::select(-taxon)) >= 3)
-summary.table[keep,] %>% gt
+combined.result <- bind_rows(list(aldex.tt = aldex.tt.res,
+                                  paired.tt = paired.tt.res,
+                                  aldex.glm = aldex.glm.res,
+                                  ancombc = ancombc.res,
+                                  corncob = dplyr::select(corncob.res, -ra.diff),
+                                  linDA = linda.res),
+                             .id = 'method')
+combined.result$taxon <- factor(combined.result$taxon, levels = unique(str_sort(combined.result$taxon, numeric = TRUE)))
+
+p.value.tb <- combined.result %>% 
+    # Here convert corncob p value to corncob wald test p value
+    mutate(p = if_else(method == 'corncob', wald.p, p)) %>% 
+    dplyr::select(taxon, method, p) %>% 
+    pivot_wider(names_from = method, values_from = p) %>% 
+    column_to_rownames('taxon')
+sig <- (p.value.tb <= alpha)
+sig[is.na(sig)] <- FALSE
+
+keep <- which(rowSums(sig) >= 3)
+sig[keep,] %>% 
+    data.frame() %>%
+    rownames_to_column('taxon') %>% 
+    arrange(str_rank(taxon, numeric = TRUE)) %>% 
+    gt() %>%
+    data_color(columns = colnames(sig),
+               fn = scales::col_factor(palette = scales::hue_pal()(2),
+                                       domain = c(FALSE, TRUE)))
 ```
 
 ```{r}
-# fold change
-fold.change <- bind_rows(list(`aldex.tt.lfc(median)` = aldex.tt.res,
-                              paired.tt.lfc = paired.tt.res,
-                              `aldex.glm.lfc(median)` = aldex.glm.res,
-                              ancombc.lfc = ancombc.res,
-                              corncob.lfc = dplyr::select(corncob.res, -ra.diff),
-                              corncob.ra.diff = dplyr::select(corncob.res, -log2fold) %>% mutate(log2fold = ra.diff),
-                              linDA.lfc = linda.res), .id = 'method') %>% 
-    filter(taxon %in% summary.table[keep,'taxon']) %>% 
-    rename(difference = log2fold) %>% 
-    mutate(direction = if_else(difference > 0, 'positive', 'negative')) 
-fold.change$taxon <- factor(fold.change$taxon, levels = unique(str_sort(fold.change$taxon, numeric = TRUE)))
-
-ggplot(fold.change) +
-    geom_bar(aes(x = taxon, y = difference, fill = direction), stat = 'identity', width = 0.7) +
+# only keep ASV jointly agreed across different methods.
+combined.result.sub <- combined.result %>% 
+    filter(taxon %in% rownames(sig)[keep])# %>% 
+    # mutate(new.p = if_else(method == 'corncob', wald.p, p)) %>% 
+    # mutate(significant = if_else(new.p <= alpha&!is.na(new.p), TRUE, FALSE))
+    #filter(p <= alpha, !(method == 'corncob'&is.na(wald.p)))
+ggplot(combined.result.sub) +
+    geom_bar(aes(x = taxon, y = log2fold, fill = method), position="dodge", stat = 'identity', width = 0.7) +
+    #scale_color_manual(values = c('black','white')) +
     theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
-    facet_wrap(~method, scales = 'free_y')
+    ylab('log 2 fold change')
 ```
 
 correlation of p-value for each method (except for corncob).
 
 ```{r}
-cor(p.value.tb %>% column_to_rownames('taxon') %>% na.omit())
+cor.tb <- combined.result %>% 
+    dplyr::select(taxon, method, p) %>% 
+    pivot_wider(names_from = method, values_from = p) %>% 
+    column_to_rownames('taxon') %>% 
+    na.omit() %>% 
+    cor()
+cor.tb
+corrplot::corrplot(cor.tb,
+                   method = 'color',
+                   type = "upper",
+                   col = colorRampPalette(c("blue", "white", "red"))(100),
+                   tl.col = "black",
+                   addCoef.col = "black")
 ```
 
 
