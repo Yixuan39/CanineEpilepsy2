@@ -8,8 +8,13 @@ Below is a microbiome abundance plot of our samples. More abundance plots in dif
 
 ![](https://github.com/Yixuan39/CanineEpilepsy2/blob/main/figures/abundance_phylum.png)
 
+**Sample Distribution**
+
+![](https://github.com/Yixuan39/CanineEpilepsy2/blob/main/figures/sample_distribution_state.png)
+
 # Analysis
 
 1. Alpha-diversity analysis & Beta-diversity analysis:  [alpha-beta-diversity.html](https://yixuan39.github.io/CanineEpilepsy2/code/alpha-beta-diversity.html) 
 2. Differential abundance analysis:  [DA-analysis.html](https://yixuan39.github.io/CanineEpilepsy2/code/DA-analysis.html) 
 3. ASV sharing intra&inter households: [ASV_sharing.html](https://yixuan39.github.io/CanineEpilepsy2/code/ASV_sharing.html) 
+4. Explore Collinsella: [Explore_Collinsella.html](https://yixuan39.github.io/CanineEpilepsy2/code/Explore_Collinsella.html) 
