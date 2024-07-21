@@ -14,7 +14,6 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(here)
 library(phyloseq)
-library(vegan)
 theme_set(theme_bw())
 
 filt_fun <- function (x, min_reads = 100, min_samples = 5) {
@@ -30,9 +29,9 @@ tax <- tax_table(ps) %>% data.frame() %>% rownames_to_column('taxon')
 
 sam$Household <- factor(sam$Household, levels = str_rank(unique(sam$Household), numeric = TRUE))
 tax.collin <- tax %>% filter(Genus == 'Collinsella')
-otu.clr <- otu %>% 
-    #vegan::decostand('clr', pseudocount = 0.5) %>% # prior value same as aldex2
-    vegan::decostand('log') %>%
+otu.clr <- (otu + 1) %>% 
+    # vegan::decostand('clr', pseudocount = 0.5) %>% # prior value same as aldex2
+    log2() %>% 
     dplyr::select(tax.collin$taxon) %>% 
     bind_cols(dplyr::select(sam, Epileptic.or.Control))
 
