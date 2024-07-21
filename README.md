@@ -8,10 +8,6 @@ Below is a microbiome abundance plot of our samples. More abundance plots in dif
 
 ![](https://github.com/Yixuan39/CanineEpilepsy2/blob/main/figures/abundance_phylum.png)
 
-**Sample Distribution**
-
-![](https://github.com/Yixuan39/CanineEpilepsy2/blob/main/figures/sample_distribution_state.png)
-
 # Analysis
 
 1. Alpha-diversity analysis & Beta-diversity analysis:  [alpha-beta-diversity.html](https://yixuan39.github.io/CanineEpilepsy2/code/alpha-beta-diversity.html) 
