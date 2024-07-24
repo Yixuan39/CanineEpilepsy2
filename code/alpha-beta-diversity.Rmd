@@ -375,10 +375,18 @@ permdisp(ps.sub, 'Sex', 'wunifrac')
 ## Age Effect
 
 ```{r warning=FALSE}
+sam$Age..months. <- as.numeric(sam$Age..months.)
 ggplot(sam) +
-    geom_line(aes(x = as.numeric(Household), y = as.numeric(Age..months.), group = Household)) + 
-    geom_point(aes(x = as.numeric(Household), y = as.numeric(Age..months.), colour = Epileptic.or.Control)) +
-    xlab('Household') + ylab('Age')
+    geom_line(aes(x = as.numeric(Household), y = Age..months./12, group = Household)) + 
+    geom_point(aes(x = as.numeric(Household), y = Age..months./12, colour = Epileptic.or.Control)) +
+    xlab('Household') + ylab('Age in Year')
+
+sam.epi <- sam %>% filter(Epileptic.or.Control == 'Epileptic')
+sam.ctl <- sam %>% filter(Epileptic.or.Control == 'Control')
+age.diff <- data.frame(Household = sam.epi$Household, Age.Diff = sam.epi$Age..months. - sam.ctl$Age..months.)
+ggplot(age.diff) +
+    geom_bar(aes(x = as.numeric(Household), y = Age.Diff/12), stat = 'identity') + 
+    xlab('Household') + ylab('Age Difference in Year')
 ```
 
 
