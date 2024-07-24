@@ -60,7 +60,8 @@ tax[aldex.tt$taxon,] %>%
     dplyr::select(Phylum, Genus) %>% 
     cbind(log2fold = aldex.tt$diff.btw,
           p = aldex.tt$we.ep) %>% 
-    rownames_to_column('taxon') -> aldex.tt.res
+    rownames_to_column('taxon') %>% 
+    arrange(str_rank(taxon, numeric = TRUE)) -> aldex.tt.res
 aldex.tt.res %>% filter(p <= alpha) %>% gt()
 ```
 
@@ -117,7 +118,6 @@ aldex.glm <- aldex.glm(x, model) %>%
 ```
 
 ```{r}
-
 tax[aldex.glm$taxon,] %>% 
     data.frame() %>% 
     dplyr::select(Phylum, Genus) %>% 
@@ -145,7 +145,8 @@ tax_table(ps)[ancombc.da$res$p_val$taxon,] %>%
     dplyr::select(taxon,Phylum, Genus, log2fold) %>% 
     left_join(ancombc.da$res$p_val, by = 'taxon') %>% 
     mutate(p = Epileptic.or.ControlEpileptic) %>% 
-    dplyr::select(taxon,Phylum, Genus, log2fold,p) -> ancombc.res
+    dplyr::select(taxon,Phylum, Genus, log2fold,p) %>% 
+    arrange(str_rank(taxon, numeric = TRUE)) -> ancombc.res
 ancombc.res %>% filter(p <= alpha) %>% gt()
 ```
 
@@ -156,7 +157,7 @@ corncob.da <- differentialTest(formula= ~ Epileptic.or.Control + Household,
                                phi.formula = ~ 1,
                                formula_null = ~ Household,
                                phi.formula_null = ~ 1,
-                               test = 'Wald',
+                               test = 'LRT',
                                data = ps,
                                taxa_are_rows = FALSE)
 ```
@@ -192,7 +193,9 @@ corncob.taxa <- names(corncob.da$p[which(corncob.da$p < alpha)])
 # p value in the table is term specific, but significance is determined by wald test
 corncob.res <- data.frame(tax[,c(2,6)], corncob.sum.tb) %>%
     rownames_to_column('taxon') %>% 
-    cbind(wald.p = corncob.da$p)
+    #cbind(wald.p = corncob.da$p)
+    mutate(p = corncob.da$p) %>% 
+    arrange(str_rank(taxon, numeric = TRUE))
 corncob.res %>% filter(taxon %in% corncob.taxa) %>% gt()
 ```
 
@@ -215,7 +218,8 @@ tax[linda.res$taxon,] %>%
     data.frame() %>% 
     dplyr::select(Phylum, Genus) %>% 
     cbind(log2fold = linda.res$log2FoldChange, p = linda.res$pvalue) %>% 
-    rownames_to_column('taxon') -> linda.res
+    rownames_to_column('taxon') %>% 
+    arrange(str_rank(taxon, numeric = TRUE)) -> linda.res
 linda.res %>% filter(p <= alpha) %>% gt()
 ```
 
@@ -233,7 +237,7 @@ combined.result$taxon <- factor(combined.result$taxon, levels = unique(str_sort(
 
 p.value.tb <- combined.result %>% 
     # Here convert corncob p value to corncob wald test p value
-    mutate(p = if_else(method == 'corncob', wald.p, p)) %>% 
+    #mutate(p = if_else(method == 'corncob', wald.p, p)) %>% 
     dplyr::select(taxon, method, p) %>% 
     pivot_wider(names_from = method, values_from = p) %>% 
     column_to_rownames('taxon')
@@ -244,7 +248,6 @@ keep <- which(rowSums(sig) >= 3)
 sig[keep,] %>% 
     data.frame() %>%
     rownames_to_column('taxon') %>% 
-    arrange(str_rank(taxon, numeric = TRUE)) %>% 
     gt() %>%
     data_color(columns = colnames(sig),
                fn = scales::col_factor(palette = scales::hue_pal()(2),
