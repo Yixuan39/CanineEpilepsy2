@@ -36,8 +36,8 @@ alpha.diversity <- data.frame(sample_data(ps),estimate_richness(ps),read_depth =
 ## Household Effect
 
 ```{r}
-ggplot(alpha.diversity,aes(x = Household, y = Shannon, group = Household)) +
-    geom_point() + geom_line()
+ggplot(alpha.diversity,aes(x = as.numeric(Household), y = Shannon, group = Household)) +
+    geom_point() + geom_line() + xlab('Household')
 ```
 
 ```{r}
