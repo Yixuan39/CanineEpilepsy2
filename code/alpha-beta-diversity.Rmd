@@ -20,9 +20,12 @@ theme_set(theme_bw())
 filt_fun <- function (x, min_reads = 100, min_samples = 5) {
     (sum(x) > min_reads) & (sum(x > 0) > min_samples)
 }
-ps <- readRDS(here('data','following_study','ps_rarefied.rds')) %>% 
-    filter_taxa(filt_fun, prune = TRUE) 
+ps <- readRDS(here('data','following_study','ps_rarefied.rds')) 
 sample_data(ps)[is.na(sample_data(ps))] <- 'NA'
+# transform data into proportion
+ps.prop <- ps %>% transform_sample_counts(function(x) x/sum(x))
+# double check proportion transform
+sample_sums(ps.prop) %>% summary()
 sam <- data.frame(sample_data(ps))
 max.core <- parallel::detectCores()
 ```
@@ -30,7 +33,7 @@ max.core <- parallel::detectCores()
 # Alpha Diversity
 
 ```{r}
-alpha.diversity <- data.frame(sample_data(ps),estimate_richness(ps),read_depth = rowSums(otu_table(ps)))
+alpha.diversity <- data.frame(sample_data(ps),estimate_richness(ps))
 ```
 
 ## Household Effect
@@ -106,8 +109,8 @@ t.test(Shannon~Sex, data = alpha.diversity)
 ## Age Effect
 
 ```{r}
-ggplot(alpha.diversity, aes(x = as.numeric(Age..months.), y = Shannon)) +
-    geom_point()
+ggplot(alpha.diversity, aes(x = as.numeric(Age..months.)/12, y = Shannon)) +
+    geom_point() + xlab('Age')
 ```
 
 ```{r}
@@ -117,62 +120,7 @@ lm(Shannon~as.numeric(Age..months.), data = alpha.diversity) %>% summary()
 
 # Beta Diversity
 
-```{r}
-ord <- ps %>% ordinate(method = "MDS", distance = 'unifrac')
-plot_ordination(ps, ord)
-```
-
-The PCoA plot shows a very separate pattern of four clusters. Let's take a look at the phlogenetic tree of our data.
-
-```{r}
-plot_tree(ps, "treeonly")
-```
-
-Some of the taxa have extremely long branch. Are they influential?
-
-```{r warning=FALSE}
-# Warning: Not all nodes are descendants in this tree
-if (require(adephylo)) {dist.root <- adephylo::distRoot(phy_tree(ps))}
-hist(dist.root); dist.root %>% sort(decreasing = TRUE) %>% head(20)
-detach('package:adephylo', character.only = TRUE, unload = TRUE, force = TRUE)
-```
-
-Let's see which ASV has distance from root longer than 10.
-
-```{r}
-long.branch <- dist.root[dist.root > 5]
-long.branch
-```
-
-Are these ASVs special?
-
-```{r}
-dada2:::pfasta(refseq(ps)[names(long.branch)], ids = names(long.branch))
-```
-
-Result returned from BLAST (web interface):
-
-|  ASV   |        Taxonomy        | \% identity |
-|:------:|:----------------------:|:-----------:|
-| ASV601 | Anaerobutyricum hallii |    95.1     |
-| ASV438 | uncultured Blautia sp. |    97.3     |
-
-Now we remove this outlier ASVs
-
-```{r, message=FALSE}
-all.taxa <- taxa_names(ps)
-keep.taxa <- all.taxa[!(all.taxa %in% names(long.branch))]
-ps.sub <- ps %>% prune_taxa(keep.taxa, .)
-```
-
-Convert ps.sub to proportion
-
-```{r, message=FALSE}
-ps.sub <- ps.sub %>% transform_sample_counts(function(x) x / sum(x))
-sample_sums(ps.sub) %>% summary()
-```
-
-# Test for Effect
+## Test for Effect
 
 ```{r}
 plot_ord <- function(data, factor, method, distance){
@@ -206,7 +154,7 @@ permdisp <- function(data, group, method, permutations=1e4, pairwise = FALSE, co
 ## Household Effect
 
 ```{r}
-permanova(ps.sub, 'Household', 'bray')
+permanova(ps.prop, 'Household', 'bray')
 ```
 
 ## Epileptic Effect
@@ -214,24 +162,24 @@ permanova(ps.sub, 'Household', 'bray')
 ### Ordination
 
 ```{r}
-plot_ord(ps.sub, 'Epileptic.or.Control','MDS','bray')
-plot_ord(ps.sub, 'Epileptic.or.Control','MDS','wunifrac')
-plot_ord(ps.sub, 'Epileptic.or.Control','NMDS','bray')
-plot_ord(ps.sub, 'Epileptic.or.Control','NMDS','wunifrac')
+plot_ord(ps.prop, 'Epileptic.or.Control','MDS','bray')
+plot_ord(ps.prop, 'Epileptic.or.Control','MDS','wunifrac')
+plot_ord(ps.prop, 'Epileptic.or.Control','NMDS','bray')
+plot_ord(ps.prop, 'Epileptic.or.Control','NMDS','wunifrac')
 ```
 
 ### PERMANOVA Test
 
 ```{r}
-permanova(ps.sub, 'Epileptic.or.Control', 'bray', strata = 'Household')
-permanova(ps.sub, 'Epileptic.or.Control', 'wunifrac', strata = 'Household')
+permanova(ps.prop, 'Epileptic.or.Control', 'bray', strata = 'Household')
+permanova(ps.prop, 'Epileptic.or.Control', 'wunifrac', strata = 'Household')
 ```
 
 ### PERMDISP
 
 ```{r}
-permdisp(ps.sub, 'Epileptic.or.Control', 'bray')
-permdisp(ps.sub, 'Epileptic.or.Control', 'wunifrac')
+permdisp(ps.prop, 'Epileptic.or.Control', 'bray')
+permdisp(ps.prop, 'Epileptic.or.Control', 'wunifrac')
 ```
 
 ## Breed Effect
@@ -239,14 +187,14 @@ permdisp(ps.sub, 'Epileptic.or.Control', 'wunifrac')
 a table of \# of breed. frequency table
 
 ```{r}
-(data.frame(sample_data(ps.sub))$Breed.Group..1.) %>% table()
+(data.frame(sample_data(ps.prop))$Breed.Group..1.) %>% table()
 ```
 
 ```{r}
-plot_ord(ps.sub, 'Breed.Group..1.','MDS','bray')
-plot_ord(ps.sub, 'Breed.Group..1.','MDS','wunifrac')
-plot_ord(ps.sub, 'Breed.Group..1.','NMDS','bray')
-plot_ord(ps.sub, 'Breed.Group..1.','NMDS','wunifrac')
+plot_ord(ps.prop, 'Breed.Group..1.','MDS','bray')
+plot_ord(ps.prop, 'Breed.Group..1.','MDS','wunifrac')
+plot_ord(ps.prop, 'Breed.Group..1.','NMDS','bray')
+plot_ord(ps.prop, 'Breed.Group..1.','NMDS','wunifrac')
 ```
 
 ### PERMANOVA
@@ -265,8 +213,8 @@ same.breed.group;sum(same.breed.group)
 Here we see 39 out of 49 household have dogs in same breed group
 
 ```{r}
-permanova(ps.sub, 'Household + Breed.Group..1.', 'bray')
-permanova(ps.sub, 'Household + Breed.Group..1.', 'wunifrac')
+permanova(ps.prop, 'Household + Breed.Group..1.', 'bray')
+permanova(ps.prop, 'Household + Breed.Group..1.', 'wunifrac')
 ```
 
 ### PERMANOVA Test by Epileptic and Control Group
@@ -274,8 +222,8 @@ permanova(ps.sub, 'Household + Breed.Group..1.', 'wunifrac')
 Here we
 
 ```{r message=FALSE}
-ps.control <- ps.sub %>% subset_samples(Epileptic.or.Control == 'Control')
-ps.epileptic <- ps.sub %>% subset_samples(Epileptic.or.Control == 'Epileptic')
+ps.control <- ps.prop %>% subset_samples(Epileptic.or.Control == 'Control')
+ps.epileptic <- ps.prop %>% subset_samples(Epileptic.or.Control == 'Epileptic')
 ```
 
 ```{r}
@@ -361,15 +309,15 @@ plot_ord(ps, 'Sex','NMDS','wunifrac')
 ### PERMANOVA
 
 ```{r}
-permanova(ps.sub, 'Household + Sex', 'bray')
-permanova(ps.sub, 'Household + Sex', 'wunifrac')
+permanova(ps.prop, 'Household + Sex', 'bray')
+permanova(ps.prop, 'Household + Sex', 'wunifrac')
 ```
 
 ### PERMDISP
 
 ```{r}
-permdisp(ps.sub, 'Sex', 'bray')
-permdisp(ps.sub, 'Sex', 'wunifrac')
+permdisp(ps.prop, 'Sex', 'bray')
+permdisp(ps.prop, 'Sex', 'wunifrac')
 ```
 
 ## Age Effect
@@ -393,6 +341,6 @@ ggplot(age.diff) +
 ### PERMANOVA
 
 ```{r}
-permanova(ps.sub, 'Household + Age..months.', 'bray')
-permanova(ps.sub, 'Household + Age..months.', 'wunifrac')
+permanova(ps.prop, 'Household + Age..months.', 'bray')
+permanova(ps.prop, 'Household + Age..months.', 'wunifrac')
 ```
