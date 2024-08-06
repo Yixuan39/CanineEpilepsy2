@@ -1,5 +1,5 @@
 ---
-title: "Microbiome Transmission"
+title: "ASV Sharing Across Samples"
 author: "Yixuan Yang"
 date: "`r Sys.Date()`"
 output: html_document
@@ -17,12 +17,7 @@ library(phyloseq)
 library(tidyverse)
 theme_set(theme_bw())
 
-filt_fun <- function (x, min_reads = 100, min_samples = 5) {
-    (sum(x) > min_reads) & (sum(x > 0) > min_samples)
-}
-
-ps.rarefied <- readRDS(here('data','following_study','ps_rarefied.rds')) %>% 
-     filter_taxa(filt_fun, prune = TRUE)
+ps.rarefied <- readRDS(here('data','following_study','ps_rarefied.rds'))
 ps.rarefied
 
 sam <- sample_data(ps.rarefied) %>% data.frame()
@@ -310,7 +305,7 @@ shared.ASV.tb %>%
     arrange(binom.test) %>% 
     filter(binom.test <= 0.05) %>% 
     as.data.frame() %>% 
-    kableExtra::kable()
+    gt::gt()
 ```
 
 
