@@ -10,26 +10,13 @@ output: html_document
 ```{r, message=FALSE}
 set.seed(255)
 library(tidyverse)
-library(ALDEx2)
-library(ANCOMBC)
-library(corncob)
-library(MicrobiomeStat) # for linDA
 library(phyloseq)
 library(here)
 library(gt)
 theme_set(theme_bw())
-filt_fun <- function (x, min_reads = 100, min_samples = 5) {
-    (sum(x) > min_reads) & (sum(x > 0) > min_samples)
-}
 
-ps <- readRDS(here('data','following_study','ps.rds')) %>% 
-    filter_taxa(filt_fun, prune = TRUE)
-ps.rare <- readRDS(here('data','following_study','ps_rarefied.rds')) %>% 
-    filter_taxa(filt_fun, prune = TRUE)
-tax <- tax_table(ps)
-alpha <- 0.05
-max.cores <- parallel::detectCores()
-ps;ps.rare
+ps <- readRDS(here('data','following_study','ps.rds'))
+ps.rare <- readRDS(here('data','following_study','ps_rarefied.rds'))
 ```
 
 
@@ -37,18 +24,51 @@ ps;ps.rare
 
 The design of this study is paired by household, and we want use t-test to compare dogs within households. Here we check if the data is really paired.
 
-```{r}
+```{r message=FALSE}
 # check if data are paired
 if (!identical(sample_data(ps)$Household[seq(1,102,2)],
                sample_data(ps)$Household[seq(1,102,2)+1])) stop('data is not paired')
 if (!identical(sample_data(ps.rare)$Household[seq(1,98,2)],
                sample_data(ps.rare)$Household[seq(1,98,2)+1])) stop('rarefied data is not paired')
+pair1 <- sign(otu_table(ps))[seq(1,102,2),]
+pair2 <- sign(otu_table(ps))[seq(1,102,2) + 1,]
+exist.by.household <- colSums((pair1 + pair2)>=1)
+
+test.filter <- function(n_household, exist.by.household, ps) {
+    asv.names <- names(exist.by.household[exist.by.household>=n_household])
+    ori.read.depth <- rowSums(otu_table(ps))
+    read.depth <- rowSums(otu_table(ps)[,asv.names])/ori.read.depth
+    sum_tb <- data.frame(taxon_size = length(asv.names)) %>% bind_cols(read.depth %>% t)
+    return(sum_tb)
+}
+test.filter.data <- data.frame()
+for (i in 0:51){
+    test.filter.data <- test.filter.data %>% bind_rows(test.filter(i, exist.by.household, ps))
+}
+test.filter.data.long <- test.filter.data %>% 
+    pivot_longer(starts_with('Netti'), names_to = 'sample', values_to = 'read_depth')
+
+ggplot(test.filter.data.long, aes(x = read_depth, y = taxon_size, group = sample)) +
+    geom_point(size = 0.1) + geom_line(linewidth = 0.1) + scale_x_reverse() +
+    geom_hline(yintercept = test.filter.data$taxon_size[21], color = 'blue') +
+    xlab('proportion reads remain') + ylab('number of ASVs') + labs(title = 'Trace of Filter Threshold')
+
+# only keep asv that appears in more than 20 households
+asv.names <- names(exist.by.household[exist.by.household>=20])
+otu_table(ps) <- otu_table(ps)[,asv.names]
+otu_table(ps.rare) <- otu_table(ps.rare)[,asv.names]
+ps;ps.rare
+
+tax <- tax_table(ps)
+alpha <- 0.05
+max.cores <- parallel::detectCores()
 ```
 
 
 ## ALDEx2 pairwise T-test
 
 ```{r}
+library(ALDEx2)
 # aldex pairwise t test
 # central log ratio transformed data
 x <- aldex.clr(t(otu_table(ps)), sample_data(ps)$Epileptic.or.Control, mc.samples=128, denom="all")
@@ -62,7 +82,7 @@ tax[aldex.tt$taxon,] %>%
           p = aldex.tt$we.ep) %>% 
     rownames_to_column('taxon') %>% 
     arrange(str_rank(taxon, numeric = TRUE)) -> aldex.tt.res
-aldex.tt.res %>% filter(p <= alpha) %>% gt()
+aldex.tt.res %>% filter(p <= alpha) %>% head(20) %>% gt()
 ```
 
 ## regular pairwise T-test on rarefied data
@@ -95,7 +115,7 @@ tax[paired.tt$taxon,] %>%
     rownames_to_column('taxon') %>% 
     arrange(str_rank(taxon, numeric = TRUE)) -> paired.tt.res
 
-paired.tt.res %>% filter(p <= alpha) %>% gt()
+paired.tt.res %>% filter(p <= alpha) %>% head(20) %>% gt()
 ```
 
 # Differential Abundance Test With GLM
@@ -113,7 +133,7 @@ model <- model.matrix(~ Epileptic.or.Control + Household, data.frame(sample_data
 # Perform CLR transformation and Monte Carlo sampling
 x <- aldex.clr(t(otu_table(ps)), model, mc.samples=128, denom="all", verbose = FALSE)
 aldex.glm <- aldex.glm(x, model) %>% 
-    cbind(aldex.glm.effect(x, CI = TRUE, verbose = FALSE)) %>% 
+    cbind(aldex.glm.effect(x, verbose = FALSE)) %>% 
     rownames_to_column('taxon')
 ```
 
@@ -125,12 +145,13 @@ tax[aldex.glm$taxon,] %>%
           p = aldex.glm$`Epileptic.or.ControlEpileptic:pval`) %>% 
     rownames_to_column('taxon') %>% 
     arrange(str_rank(taxon, numeric = TRUE)) -> aldex.glm.res
-aldex.glm.res %>% filter(p <= alpha) %>% gt()
+aldex.glm.res %>% filter(p <= alpha) %>% head(20) %>% gt()
 ```
 
 ## ANCOMBC
 
 ```{r, message=FALSE}
+library(ANCOMBC)
 ancombc.da <- ancombc(data = ps,
                       formula = 'Epileptic.or.Control + Household',
                       n_cl = max.cores)
@@ -147,12 +168,13 @@ tax_table(ps)[ancombc.da$res$p_val$taxon,] %>%
     mutate(p = Epileptic.or.ControlEpileptic) %>% 
     dplyr::select(taxon,Phylum, Genus, log2fold,p) %>% 
     arrange(str_rank(taxon, numeric = TRUE)) -> ancombc.res
-ancombc.res %>% filter(p <= alpha) %>% gt()
+ancombc.res %>% filter(p <= alpha) %>% head(20) %>% gt()
 ```
 
 ## corncob
 
 ```{r}
+library(corncob)
 corncob.da <- differentialTest(formula= ~ Epileptic.or.Control + Household,
                                phi.formula = ~ 1,
                                formula_null = ~ Household,
@@ -196,12 +218,13 @@ corncob.res <- data.frame(tax[,c(2,6)], corncob.sum.tb) %>%
     #cbind(wald.p = corncob.da$p)
     mutate(p = corncob.da$p) %>% 
     arrange(str_rank(taxon, numeric = TRUE))
-corncob.res %>% filter(taxon %in% corncob.taxa) %>% gt()
+corncob.res %>% filter(taxon %in% corncob.taxa) %>% head(20) %>% gt()
 ```
 
 ## LinDA
 
 ```{r}
+library(MicrobiomeStat)
 linda.da <- linda(t(data.frame(otu_table(ps))),
                    data.frame(sample_data(ps)),
                    formula = '~ Epileptic.or.Control + Household',
@@ -220,7 +243,7 @@ tax[linda.res$taxon,] %>%
     cbind(log2fold = linda.res$log2FoldChange, p = linda.res$pvalue) %>% 
     rownames_to_column('taxon') %>% 
     arrange(str_rank(taxon, numeric = TRUE)) -> linda.res
-linda.res %>% filter(p <= alpha) %>% gt()
+linda.res %>% filter(p <= alpha) %>% head(20) %>% gt()
 ```
 
 # Summary
