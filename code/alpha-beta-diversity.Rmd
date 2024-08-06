@@ -20,7 +20,8 @@ theme_set(theme_bw())
 filt_fun <- function (x, min_reads = 100, min_samples = 5) {
     (sum(x) > min_reads) & (sum(x > 0) > min_samples)
 }
-ps <- readRDS(here('data','following_study','ps_rarefied.rds')) 
+ps <- readRDS(here('data','following_study','ps_rarefied.rds'))  %>% 
+    filter_taxa(function (x) sum(x) > 0, prune = TRUE)
 sample_data(ps)[is.na(sample_data(ps))] <- 'NA'
 # transform data into proportion
 ps.prop <- ps %>% transform_sample_counts(function(x) x/sum(x))
