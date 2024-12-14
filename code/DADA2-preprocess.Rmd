@@ -1,0 +1,177 @@
+---
+title: "DADA2 preprocess"
+author: "Yixuan Yang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Setup
+
+```{r}
+library(here)
+library(Biostrings)
+library(ShortRead)
+library(patchwork)
+library(dada2); packageVersion("dada2")
+```
+
+# Read in all sample files
+
+```{r}
+path <- "~/project_data/Epilepsy_data/221024_UNC2X_KKYJ5-KKYGJ-NETTI-in/221024_UNC2X_KKYJ5-KKYGJ-NETTI"
+fnF <- list.files(path, pattern="_R1_", full.names = TRUE)
+fnR <- list.files(path, pattern="_R2_", full.names = TRUE)
+head(list.files(path))
+```
+
+Check if sample names are matched for forward and reverse
+
+```{r}
+sam.F <- sapply(strsplit(basename(fnF), "_"), `[`, 1)
+sam.R <- sapply(strsplit(basename(fnR), "_"), `[`, 1)
+if(!identical(sam.F, sam.R)) stop("F/R fastqs mismatch") 
+```
+
+# Quality profiles
+
+Here, we pick three samples for forward and reverse read and check their quality profiles.
+
+```{r}
+plotQualityProfile(fnF[c(1,10,100)]) / plotQualityProfile(fnR[c(1,10,100)])
+```
+
+randomly pick sample 13 and 53 to check their complexity
+
+```{r}
+plotComplexity(fnF[[13]]) + plotComplexity(fnR[[53]])
+```
+
+check primers
+
+```{r}
+filtered.dir <- file.path(path, "filtered")
+filtF <- file.path(filtered.dir, basename(fnF))
+filtR <- file.path(filtered.dir, basename(fnR))
+# names(filtF) <- sam
+# names(filtR) <- sam
+
+FWD <- "GTGYCAGCMGCCGCGGTAA"
+REV <- "GGACTACNVGGGTWTCTAAT"
+nchar(c(FWD, REV))
+
+primerHits <- function(primer, fn) {
+  # Counts number of reads in which the primer is found
+  nhits <- vcountPattern(primer, sread(readFastq(fn)), fixed = FALSE)
+  return(sum(nhits > 0))
+}
+primerHits(FWD, fnF[[1]])
+primerHits(REV, fnR[[1]])
+```
+
+primer count matched. looks ok.
+
+# DADA2
+
+trim primers and filter out low quality reads
+
+```{r}
+out <- filterAndTrim(fnF, filtF, fnR, filtR, 
+                     trimLeft=c(19, 20), truncLen=c(200,150),
+                     maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+                     compress=TRUE, multithread=TRUE) # On Windows set multithread=FALSE
+head(out)
+```
+
+85% of reads retained. Perhaps 3 failed libraries with very few reads. All others look fine.
+
+```{r}
+summary(out[,2]/out[,1])
+summary(out[,2])
+plot(sort(out[,2])) 
+```
+
+check complexity again
+
+```{r}
+plotComplexity(filtF[[13]]) + plotComplexity(filtR[[53]])
+```
+
+There's still a lower complexity bump. Could be real.
+
+Show error model plot
+
+```{r}
+errF <- learnErrors(filtF, multi=TRUE)
+errR <- learnErrors(filtR, multi=TRUE)
+
+plotErrors(errF)
+plotErrors(errR)
+```
+
+apply DADA2 algorithm
+
+```{r echo=FALSE}
+ddF <- dada(filtF, err=errF, pool="pseudo", multithread=TRUE)
+ddR <- dada(filtR, err=errR, pool="pseudo", multithread=TRUE)
+```
+
+
+```{r}
+mm <- mergePairs(ddF, filtF, ddR, filtR, verbose=TRUE)
+sta <- makeSequenceTable(mm)
+st <- removeBimeraDenovo(sta, method="consensus", multithread=TRUE)
+```
+
+percentage of chimeras can be found by
+
+```{r}
+1 - sum(st)/sum(sta)
+```
+
+around 90% ASVs were reduced
+
+```{r}
+1 - ncol(st)/ncol(sta)
+```
+
+```{r}
+sq <- getSequences(st)
+table(nchar(sq))
+# 252-254... like before. Did they change primers since then?
+lens <- sort(unique(nchar(sq)))
+tot <- sapply(lens, function(l) sum(colSums(st)[nchar(sq)==l]))
+names(tot) <- as.character(lens)
+tot
+# All in 252-254 basically
+```
+
+
+```{r}
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(ddF, getN), sapply(ddR, getN), sapply(mm, getN), rowSums(st))
+# If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sam.F
+head(track)
+# In observed range, but not great, chimera numbers here. Ask Andrea?
+```
+
+
+```{r}
+tax <- assignTaxonomy(st, "~/tax/silva_nr99_v138.2_toGenus_trainset.fa.gz", multithread=TRUE)
+taxsp <- addSpecies(tax, "~/tax/silva_v138.2_assignSpecies.fa.gz")
+rownames(st) <- sam.F
+```
+
+save all data
+
+```{r}
+saveRDS(st, here("data", "following_study", "st.rds"))
+saveRDS(tax, here("data", "following_study", "tax.rds"))
+saveRDS(taxsp, here("data", "following_study", "taxsp.rds")) # tax at species level
+```
+
