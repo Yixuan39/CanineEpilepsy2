@@ -11,14 +11,14 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r message=FALSE}
 rm(list = ls())
-set.seed(2024)
 library(tidyverse)
 library(readxl)
 library(here)
 library(phyloseq)
+library(DECIPHER)
 ```
 
-# Check Metadata
+# Read in metadata
 
 ```{r}
 file <- 'Epilepsy study mapping file with patient info updated 1.22.24 for microbiome analysis.xlsx'
@@ -43,11 +43,8 @@ rownames(meta_data) <- 'Netti' %>%
     str_c(sprintf("%03d", as.integer(meta_data$SampleID2)))
 meta_data <- meta_data %>% add_column(study = 'following')
 ```
-Separate sex variable
 
-```{r}
-table(meta_data$Sex)
-```
+Sex column contains information about reproductive status, here we separate them into two columns
 
 ```{r}
 meta_data <- meta_data %>%
@@ -55,18 +52,20 @@ meta_data <- meta_data %>%
     mutate(Spayed.or.Neutered = (Reproductive.Status != 'I'))
 ```
 
-There are NAs in Pheno.Y.N. Here we fill NA with No, since those are dogs in control group
+Pheno.Y.N. indicates whether the dogs are exposed to phenobarbital or not. Here assign NA to No.
 
 ```{r}
 meta_data$Pheno.Y.N[is.na(meta_data$Pheno.Y.N)] <- 'No'
 ```
 
 
-# Integrate data with phyloseq
+# Create phyloseq object
+
+Store the metadata, sequence table, and taxonomy table into a phyloseq object
 
 ```{r}
-st <- readRDS(here('data','following_study','st.rds'))
-taxa <- readRDS(here('data','following_study','taxsp.rds'))
+st <- readRDS(here('data','following_study','st.rds')) # sequence table
+taxa <- readRDS(here('data','following_study','taxsp.rds')) # taxonomy table
 
 # match st order with metadata (since metadata is sorted by household)
 st <- st[meta_data$SampleID2,]
@@ -96,42 +95,64 @@ which(rowSums(st) < 100)
 
 All of the data has more than 100 reads, but sample 40,80 and 108 have relative low sequencing depth.
 
-**remove duplicated samples**
+# Phylogenetic Tree construction
 
-For household 52
+Here, we use DECIPHER package to align sequence and then construct phylogenetic tree using maximum likelihood method with `GTR+G4` model.
 
-sample 106,107,108 are duplicates of sample 103. sample 105 is the duplicate of sample 104.
-
-```{r}
-rowSums(st)[str_c('Netti',c('103','106','107','108'))] %>% sort()
-rowSums(st)[str_c('Netti',c('104','105'))] %>% sort()
+```{r, eval = FALSE}
+set.seed(2024)
+alignment <- AlignSeqs(refseq(ps), processors=NULL) 
+tree <- Treeline(alignment, processors=NULL)
+WriteDendrogram(tree, file=here('data','following_study','tree.nwk'))
 ```
 
-Here we can keep sample 103 since it has more reads.
+add phylogenetic information to pyholseq objects
 
-For household 54
+```{r}
+tree <- read_tree(here('data','following_study','tree.nwk'))
+ps <- merge_phyloseq(ps, phy_tree(tree))
+```
 
-sample 63,113,115 are duplicates of sample 114. sample 64,117,118 are duplicates of sample 116.
+# Data Cleaning
+
+Some dogs have duplicated samples. Here, we keep the one with the most reads.
+
+In household 52, sample 106,107,108 are duplicates of sample 103.
+
+```{r}
+sort(rowSums(st)[str_c('Netti',c('103','106','107','108'))])
+```
+
+sample 105 is the duplicate of sample 104.
+
+```{r}
+sort(rowSums(st)[str_c('Netti',c('104','105'))])
+```
+
+So, for household 52, sample 103,104 are kept.
+
+In household 54, sample 63,113,115 are duplicates of sample 114. 
 
 ```{r}
 rowSums(st)[str_c('Netti',c('063','113','114','115'))] %>% sort()
+```
+
+sample 64,117,118 are duplicates of sample 116.
+
+```{r}
 rowSums(st)[str_c('Netti',c('064','116','117','118'))] %>% sort()
 ```
 
-Here we can keep the sample with most reads (sample 64 and 114)
+So, for household 52, sample 64,114 are kept.
 
-# Clean Metadata
-
-For now we can remove sample 106,107,108,113,115,63,116,117,118.
+now we can remove sample 106,107,108,113,115,63,116,117,118 since they are duplicates with lower sequencing depth.
 
 ```{r}
-remove.list <- c(104,106,107,108,113,115,63,116,117,118)
-
-ps <- ps %>% 
-    subset_samples(!(SampleID2 %in% remove.list))
+duplicated.samples <- c(104,106,107,108,113,115,63,116,117,118)
+ps <- subset_samples(ps, !(SampleID2 %in% duplicated.samples))
 ```
 
-For households that have more than two samples, we will remove the exceed samples and make them into pairs.
+Some of the households have more than 2 samples, we force to keep two dogs to maintain the structure of the study design.
 
 ```{r}
 n.samples <- table(sample_data(ps)$Household)
@@ -140,19 +161,34 @@ n.samples[n.samples != 2]
 
 There are 4 dogs in household 17, 18, and 26.
 
+For household 17, we keep Netti 109 and 112. 
+
 ```{r}
-exceed.samples <- sample_data(ps) %>%
+sample_data(ps) %>%
     data.frame() %>% 
-    filter(Household %in% c(17,18,26)) %>%
-    arrange(Household) %>%
-    dplyr::select(SampleID2, Household, Epileptic.or.Control)
-exceed.samples
+    mutate(read.depth = rowSums(otu_table(ps))) %>% 
+    filter(Household == 17) %>%
+    dplyr::select(SampleID2, Household, Epileptic.or.Control, read.depth)
 ```
 
-Take a look at the sequencing depth of these samples
+For household 18, we keep Netti 049 and 050.
 
 ```{r}
-rowSums(st)[exceed.samples$SampleID2]
+sample_data(ps) %>%
+    data.frame() %>% 
+    mutate(read.depth = rowSums(otu_table(ps))) %>% 
+    filter(Household == 18) %>%
+    dplyr::select(SampleID2, Household, Epileptic.or.Control, read.depth)
+```
+
+For household 26, we keep Netti 025 and 026
+
+```{r}
+sample_data(ps) %>%
+    data.frame() %>% 
+    mutate(read.depth = rowSums(otu_table(ps))) %>% 
+    filter(Household == 26) %>%
+    dplyr::select(SampleID2, Household, Epileptic.or.Control, read.depth)
 ```
 
 
@@ -160,34 +196,11 @@ Remove exceeded samples to make a paired data.
 
 ```{r}
 remove.list <- c(110,111,9,10,37,38)
-ps <- ps %>% 
-    subset_samples(!(SampleID2 %in% remove.list))
+ps <- subset_samples(ps, !(SampleID2 %in% remove.list))
 ps
 ```
 
 Now we have 102 samples (data are paired within 51 households)
-
-# Align Sequences
-
-```{r, eval = FALSE}
-alignment <- DECIPHER::AlignSeqs(refseq(ps), anchor=NA)
-alignment.file <- here('data', 'following_study', 'msa.fasta')
-Biostrings::writeXStringSet(alignment, alignment.file)
-```
-
-Here we use `raxml-ng` to find the best tree of the alignment
-
-```{bash, eval = FALSE}
-raxml-ng --msa data/following_study/msa.fasta --model GTR+G --prefix data/following_study/tree --seed 2024
-```
-
-```{r}
-best.tree <- read_tree(here('data','following_study','tree.raxml.bestTree'))
-ps <- merge_phyloseq(ps, phy_tree(best.tree))
-# order phyloseq data by household
-# ps <- microViz::ps_arrange(ps, str_rank(Household, numeric = TRUE))
-if (!identical(rownames(otu_table(ps)), rownames(sample_data(ps)))) stop('sample names are not matched!')
-```
 
 # Rarefied Data
 
@@ -208,17 +221,35 @@ ps.rarefied <- rarefy_even_depth(ps, sample.size = 44590)
 ps.rarefied
 ```
 
-Two samples are lost after rarefying. Now we have 98 samples.
+Two samples are lost after rarefying. To keep the consistency between the rarefied and non-rarefied data and the structure of the pairwise study design, we remove pairs from household 37 and 46.
 
 ```{r message=FALSE}
 house.rm <- meta_data[c('Netti040','Netti080'),'Household']
 house.rm
-ps.rarefied <- ps.rarefied %>% 
-    subset_samples(!(Household %in% house.rm))
+```
+
+```{r}
+ps <- subset_samples(ps, !(Household %in% house.rm))
+# since some households removed, remove taxa that are not present in the remained sample
+ps <- filter_taxa(ps, function (x) sum(x) > 0, prune = TRUE)
+ps
+```
+
+```{r}
+ps.rarefied <- subset_samples(ps.rarefied, !(Household %in% house.rm))
 ps.rarefied
 ```
 
+
 # Save Data
+
+check names are matched for both datasets
+
+```{r}
+if (!identical(rownames(otu_table(ps)), rownames(sample_data(ps)))) stop('sample names are not matched!')
+if (!identical(rownames(otu_table(ps.rarefied)), rownames(sample_data(ps.rarefied)))) stop('sample names are not matched!')
+```
+
 
 ```{r}
 saveRDS(ps, file = here('data','following_study','ps.rds'))
