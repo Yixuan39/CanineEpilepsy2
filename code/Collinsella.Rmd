@@ -16,7 +16,7 @@ library(here)
 library(phyloseq)
 theme_set(theme_bw())
 
-ps <- readRDS(here('data','following_study','ps.rds'))
+ps <- readRDS(here('data','following_study','ps_rarefied.rds'))
 
 sam <- sample_data(ps) %>% data.frame()
 otu <- otu_table(ps) %>% data.frame()
@@ -24,16 +24,14 @@ tax <- tax_table(ps) %>% data.frame() %>% rownames_to_column('taxon')
 tax.collin <- tax %>% filter(Genus == 'Collinsella')
 otu.collin <- otu[,tax.collin$taxon] %>% 
     mutate(Collinsella = rowSums(.))
-otu.log <- (otu.collin + 1) %>% 
-    # vegan::decostand('clr', pseudocount = 0.5) %>% # prior value same as aldex2
-    log2()
+otu.log <- log2(otu.collin + 1)
 # Here only keep collinsella that have prevlance > 0.1
 tax.collin.keep <- names(colSums(otu.collin)[colSums(sign(otu.collin))>=10]) %>% 
     str_sort(numeric = TRUE)
 
 sam.long <- sam %>%
     bind_cols(otu.collin) %>% 
-    pivot_longer(cols = tax.collin.keep, names_to = 'ASV', values_to = 'abundance') %>% 
+    pivot_longer(cols = all_of(tax.collin.keep), names_to = 'ASV', values_to = 'abundance') %>% 
     mutate(exist = sign(abundance)) %>% 
     mutate(log_abn = log2(abundance + 1))
 ```
@@ -52,11 +50,7 @@ otu.ctl <- otu.log %>%
 
 otu.diff <- data.frame(otu.epi - otu.ctl) %>%
     mutate(Household = unique(sam$Household)) %>% 
-    pivot_longer(tax.collin.keep, names_to = 'ASV', values_to = "LFC")
-
-# ggplot(otu.diff) +
-#     geom_bar(aes(x = as.numeric(Household), y = LFC, fill = ASV), stat = 'identity') +
-#     labs(x = 'Household', y = 'log 2 fold change')
+    pivot_longer(all_of(tax.collin.keep), names_to = 'ASV', values_to = "LFC")
 
 ggplot(otu.diff) +
     geom_bar(aes(x = as.numeric(Household), y = LFC, fill = (LFC > 0)), stat = 'identity') +
@@ -75,7 +69,7 @@ Are there always more Collinsella ASVs in Epileptic group than control group?
 ```{r}
 library(rstatix)
 sapply(tax.collin.keep, function(taxa) pairwise_sign_test(filter(sam.long, ASV == taxa),
-                                                          log_abn ~ Epileptic.or.Control, 
+                                                          abundance ~ Epileptic.or.Control, 
                                                           ref.group = 'Epileptic', 
                                                           alternative = 'greater')) %>% t()
 ```
@@ -124,29 +118,28 @@ ftable(xtabs(exist ~ Sex  + Epileptic.or.Control + ASV, data = sam.long))
 Does Epileptic or Control group associate with sex for Collinsella ASV?
 
 ```{r}
-tb <- xtabs(exist ~ Sex  + Epileptic.or.Control, data = sam.long %>% filter(ASV != 'Collinsella')) 
-ftable(tb)
-chisq.test(tb)
+sam.long %>% 
+    split(.$ASV) %>% 
+    lapply(function(df) summary(xtabs(exist ~ Sex  + Epileptic.or.Control, data = df)))
+```
+
+```{r}
+ftable(xtabs(exist ~ Sex  + Pheno.Y.N + ASV, data = sam.long))
 ```
 
 Does Drug usage associate on sex to the existence frequency of Collinsella?
 
 ```{r}
-tb <- xtabs(exist ~ Pheno.Y.N + Sex, data = sam.long %>% filter(ASV != 'Collinsella' & Epileptic.or.Control == 'Epileptic')) 
-ftable(tb)
-chisq.test(tb)
+sam.long %>% 
+    filter(Epileptic.or.Control == 'Epileptic') %>% 
+    split(.$ASV) %>% 
+    lapply(function(df) chisq.test(xtabs(exist ~ Sex  + Pheno.Y.N, data = df)))
 ```
 
 ```{r}
-sam.long <- sam.long %>% 
-    mutate(Age = Age..months./12) %>% 
-    mutate(pesudo_abn = abundance + 1)
-#lapply(tax.collin.keep, function(taxa) {lm(pesudo_abn ~ Age, data = sam.long %>% filter(ASV == taxa)) %>% summary()})
-result <- list()
-for (taxa in tax.collin.keep) {
-    result[[taxa]] <- MASS::glm.nb(pesudo_abn ~ Age, data = sam.long %>% filter(ASV == taxa)) %>% summary()
-    #result[[taxa]] <- lm(log_abn ~ Age, data = sam.long %>% filter(ASV == taxa)) %>% summary()
-}
-result
+library(broom)
+sam.long %>%
+    split(.$ASV) %>%
+    lapply(function(df) MASS::glm.nb((abundance + 1) ~ Age..months., data = df) %>% tidy())
 ```
 

@@ -42,6 +42,8 @@ meta_data <- meta_data %>% dplyr::select(-COMMENTS) %>% data.frame()
 rownames(meta_data) <- 'Netti' %>%
     str_c(sprintf("%03d", as.integer(meta_data$SampleID2)))
 meta_data <- meta_data %>% add_column(study = 'following')
+meta_data <- meta_data %>% 
+    arrange(str_rank(Household, numeric = T), Epileptic.or.Control)
 ```
 
 Sex column contains information about reproductive status, here we separate them into two columns
@@ -239,6 +241,14 @@ ps
 ps.rarefied <- subset_samples(ps.rarefied, !(Household %in% house.rm))
 ps.rarefied
 ```
+
+check if data are paired by household
+
+```{r}
+if (!identical(sample_data(ps)$Household[seq(1,98,2)], sample_data(ps)$Household[seq(1,98,2)+1])) stop('data is not paired')
+if (!identical(sample_data(ps.rarefied)$Household[seq(1,98,2)], sample_data(ps.rarefied)$Household[seq(1,98,2)+1])) stop('data is not paired')
+```
+
 
 
 # Save Data
