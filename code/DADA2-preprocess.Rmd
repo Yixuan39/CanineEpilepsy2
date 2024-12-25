@@ -162,8 +162,8 @@ head(track)
 
 
 ```{r}
-tax <- assignTaxonomy(st, "~/tax/silva_nr99_v138.2_toGenus_trainset.fa.gz", multithread=TRUE)
-taxsp <- addSpecies(tax, "~/tax/silva_v138.2_assignSpecies.fa.gz")
+tax <- assignTaxonomy(st, "~/tax/silva_nr99_v138.1_train_set.fa.gz", multithread=TRUE)
+taxsp <- addSpecies(tax, "~/tax/silva_species_assignment_v138.1.fa.gz")
 rownames(st) <- sam.F
 ```
 
