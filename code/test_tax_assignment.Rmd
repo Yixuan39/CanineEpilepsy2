@@ -1,0 +1,49 @@
+---
+title: "test_tax_assignment"
+author: "Yixuan Yang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load package
+
+```{r}
+library(dada2)
+library(tidyverse)
+library(here)
+library(phyloseq)
+```
+
+Load the sample data we used and the sequence table
+
+```{r}
+sam <- sample_data(readRDS(here('data','following_study','ps.rds')))
+st <- readRDS(here('data','following_study','st.rds'))
+```
+
+Assign taxonomy using Silva 138.1
+
+```{r}
+tax <- assignTaxonomy(st, "~/tax/silva_nr99_v138.1_train_set.fa.gz", multithread=TRUE)
+ps1381 <- phyloseq(sam,
+                   otu_table(st, taxa_are_rows = FALSE),
+                   tax_table(tax))
+ggplot(data = psmelt(ps1381)) + 
+    geom_col(aes(Sample, Abundance, fill = Phylum),position = "fill", width = 1)
+```
+
+Assign taxonomy using Silva 138.2
+
+```{r}
+tax <- assignTaxonomy(st, '~/tax/silva_nr99_v138.2_toGenus_trainset.fa.gz', multithread=TRUE)
+ps1382 <- phyloseq(sam,
+                   otu_table(st, taxa_are_rows = FALSE),
+                   tax_table(tax))
+ggplot(data = psmelt(ps1382)) + 
+    geom_col(aes(Sample, Abundance, fill = Phylum),position = "fill", width = 1)
+```
+

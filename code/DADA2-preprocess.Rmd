@@ -2,7 +2,11 @@
 title: "DADA2 preprocess"
 author: "Yixuan Yang"
 date: "`r Sys.Date()`"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    self_contained: true
 ---
 
 ```{r setup, include=FALSE}
@@ -12,6 +16,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # Setup
 
 ```{r}
+rm(list = ls())
 library(here)
 library(Biostrings)
 library(ShortRead)
@@ -56,8 +61,6 @@ check primers
 filtered.dir <- file.path(path, "filtered")
 filtF <- file.path(filtered.dir, basename(fnF))
 filtR <- file.path(filtered.dir, basename(fnR))
-# names(filtF) <- sam
-# names(filtR) <- sam
 
 FWD <- "GTGYCAGCMGCCGCGGTAA"
 REV <- "GGACTACNVGGGTWTCTAAT"
@@ -157,7 +160,6 @@ track <- cbind(out, sapply(ddF, getN), sapply(ddR, getN), sapply(mm, getN), rowS
 colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
 rownames(track) <- sam.F
 head(track)
-# In observed range, but not great, chimera numbers here. Ask Andrea?
 ```
 
 
@@ -175,3 +177,6 @@ saveRDS(tax, here("data", "following_study", "tax.rds"))
 saveRDS(taxsp, here("data", "following_study", "taxsp.rds")) # tax at species level
 ```
 
+```{r}
+sessioninfo::session_info()
+```

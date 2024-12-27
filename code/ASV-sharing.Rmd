@@ -1,8 +1,12 @@
 ---
-title: "ASV_sharing"
+title: "ASV Sharing Between Dogs"
 author: "Yixuan Yang"
 date: "`r Sys.Date()`"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    self_contained: true
 ---
 
 ```{r setup, include=FALSE}
@@ -179,3 +183,6 @@ df %>% rowwise() %>%
     head(20) %>% gt::gt()
 ```
 
+```{r}
+sessioninfo::session_info()
+```

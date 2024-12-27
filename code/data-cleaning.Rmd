@@ -1,8 +1,12 @@
 ---
-title: "metadata cleaning"
+title: "Metadata Cleaning"
 author: "Yixuan Yang"
 date: "`r Sys.Date()`"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    self_contained: true
 ---
 
 ```{r setup, include=FALSE}
@@ -113,6 +117,7 @@ add phylogenetic information to pyholseq objects
 ```{r}
 tree <- read_tree(here('data','following_study','tree.nwk'))
 ps <- merge_phyloseq(ps, phy_tree(tree))
+plot_tree(ps, method = 'treeonly')
 ```
 
 # Data Cleaning
@@ -266,6 +271,8 @@ saveRDS(ps, file = here('data','following_study','ps.rds'))
 saveRDS(ps.rarefied, file = here('data','following_study','ps_rarefied.rds'))
 ```
 
-
+```{r}
+sessioninfo::session_info()
+```
 
 

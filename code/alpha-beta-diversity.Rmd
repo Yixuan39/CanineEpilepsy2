@@ -1,8 +1,12 @@
 ---
-title: "alpha-beta-diversity"
+title: "Alpha and Beta Diversity Analysis"
 author: "Yixuan Yang"
 date: "`r Sys.Date()`"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    self_contained: true
 ---
 
 ```{r setup, include=FALSE}
@@ -12,116 +16,30 @@ knitr::opts_chunk$set(echo = TRUE)
 # Set Up
 
 ```{r message=FALSE}
+rm(list = ls())
 library(tidyverse)
 library(here)
 library(phyloseq)
 library(vegan)
+set.seed(2024)
 theme_set(theme_bw())
-filt_fun <- function (x, min_reads = 100, min_samples = 5) {
-    (sum(x) > min_reads) & (sum(x > 0) > min_samples)
-}
-ps <- readRDS(here('data','following_study','ps_rarefied.rds'))  %>% 
-    filter_taxa(function (x) sum(x) > 0, prune = TRUE)
-sample_data(ps)[is.na(sample_data(ps))] <- 'NA'
-# transform data into proportion
-ps.prop <- ps %>% transform_sample_counts(function(x) x/sum(x))
-# double check proportion transform
-sample_sums(ps.prop) %>% summary()
-sam <- data.frame(sample_data(ps))
 max.core <- parallel::detectCores()
+
+ps.rare <- readRDS(here('data','following_study','ps_rarefied.rds')) 
+sample_data(ps.rare)$Shannon <- estimate_richness(ps.rare)$Shannon
+# transform data into proportion
+ps.rare.prop <- ps.rare %>% transform_sample_counts(function(x) x/sum(x))
+
+sam <- data.frame(sample_data(ps.rare))
 ```
 
-# Alpha Diversity
+# Functions
 
-```{r}
-alpha.diversity <- data.frame(sample_data(ps),estimate_richness(ps))
-```
+`plot_ord` draws ordination plot for different factors using `plot_ordination` function in `phyloseq` package.
 
-## Household Effect
+`permanova` performs permutational multivariate analysis of variance (PERMANOVA) based on `adonis2` function in `vegan` package.
 
-```{r}
-ggplot(alpha.diversity,aes(x = as.numeric(Household), y = Shannon, group = Household)) +
-    geom_point() + geom_line() + xlab('Household')
-```
-
-```{r}
-anova(lm(Shannon~Household, data = alpha.diversity))
-```
-
-## Epileptic Effect
-
-```{r}
-ggplot(alpha.diversity,aes(x = Epileptic.or.Control, y = Shannon)) +
-    geom_boxplot() + geom_jitter(height = 0, width = 0.25)
-```
-
-Paired t test
-
-```{r}
-epileptic <- alpha.diversity %>% filter(Epileptic.or.Control == 'Epileptic')
-control <- alpha.diversity %>% filter(Epileptic.or.Control == 'Control')
-t.test(epileptic$Shannon, control$Shannon, paired = TRUE)
-```
-
-ANOVA with `Household` effect added
-
-```{r}
-anova(lm(Shannon~Household + Epileptic.or.Control, data = alpha.diversity))
-```
-
-## Breed Effect
-
-```{r}
-ggplot(alpha.diversity) +
-    geom_point(aes(x = Breed.Group..1., y = Shannon, colour = Breed.Group..1.)) +
-    facet_wrap(~Epileptic.or.Control) + 
-    theme(axis.text.x = element_blank(), axis.ticks.x.bottom = element_blank())
-```
-
-```{r}
-# here breed group with na is removed 
-anova(lm(Shannon~Household + Breed.Group..1., data = alpha.diversity %>% filter(Breed.Group..1. != 'NA')))
-```
-
-## Drug Effect
-
-```{r}
-alpha.diversity.epi <- alpha.diversity %>% filter(Epileptic.or.Control == 'Epileptic')
-ggplot(alpha.diversity.epi, aes(x = Pheno.Y.N, y = Shannon)) +
-    geom_boxplot() + geom_jitter(height = 0, width = 0.25)
-```
-
-```{r}
-t.test(Shannon~Pheno.Y.N, data = alpha.diversity.epi)
-```
-
-## Sex Effect
-
-```{r}
-ggplot(alpha.diversity, aes(x = Sex, y = Shannon)) +
-    geom_boxplot() + geom_jitter(height = 0, width = 0.25)
-```
-
-```{r}
-anova(lm(Shannon~Household + Sex, data = alpha.diversity))
-t.test(Shannon~Sex, data = alpha.diversity)
-```
-
-## Age Effect
-
-```{r}
-ggplot(alpha.diversity, aes(x = as.numeric(Age..months.)/12, y = Shannon)) +
-    geom_point() + xlab('Age')
-```
-
-```{r}
-lm(Shannon~as.numeric(Age..months.), data = alpha.diversity) %>% summary()
-```
-
-
-# Beta Diversity
-
-## Test for Effect
+`permdisp` performs permutational analysis of multivariate dispersions (PERMDISP) based on `betadisper` function in `vegan` package.
 
 ```{r}
 plot_ord <- function(data, factor, method, distance){
@@ -132,6 +50,7 @@ plot_ord <- function(data, factor, method, distance){
     print(p)
 }
 permanova <- function(data, formula, method, permutations=1e4, strata = NULL, core = max.core){
+    message('PERMANOVA Model: ', method, '~', formula, '; Strata: ', ifelse(is_null(strata), 'None', as.character(strata)))
     dist.matrix <- phyloseq::distance(data, method=method)
     df <- data.frame(sample_data(data))
     model <- as.formula(paste0('dist.matrix~', formula))
@@ -140,10 +59,13 @@ permanova <- function(data, formula, method, permutations=1e4, strata = NULL, co
                       data = df,
                       permutations=permutations,
                       strata = strata,
-                      parallel = core)
+                      parallel = core,
+                      by = 'term',
+                      na.action = na.omit)
     return(result)
 }
 permdisp <- function(data, group, method, permutations=1e4, pairwise = FALSE, core = max.core){
+    message('PERMDISP Model: ', method, '~', group)
     dist.matrix <- phyloseq::distance(data, method=method)
     df <- data.frame(sample_data(data))
     beta.disp <- betadisper(dist.matrix, group = df[,group])
@@ -152,196 +74,200 @@ permdisp <- function(data, group, method, permutations=1e4, pairwise = FALSE, co
 }
 ```
 
-## Household Effect
+# Start
+
+In this section, we want to estimate the effect of different factors on the microbial diversity. The factors we are focusing on are `Household`, `Epileptic.or.Control`, `Breed.Group..1.`, `Pheno.Y.N`, `Sex`, and `Age..months.`. We compare the species richness (Shannon index) among different factors using ANOVA, and compare the centroid of dissimilarity of microbial community between different groups using PERMANOVA using the Bray-Curtis and weighted Unifrac distance, and visualized using multi-dimensional scaling. PERMDISP was used to test the homogeneity of multivariate dispersions among groups.
+
+# Household Effect
+
+## Alpha Diversity
 
 ```{r}
-permanova(ps.prop, 'Household', 'bray')
+ggplot(sam,aes(x = as.numeric(Household), y = Shannon, group = Household)) +
+    geom_point() + geom_line() + xlab('Household')
+
+anova(lm(Shannon~Household, data = sam))
 ```
 
-## Epileptic Effect
+Here we see the Shannon diversity index is significantly different among households.
 
-### Ordination
+## Beta Diversity
+
+### Bray-Curtis distance
 
 ```{r}
-plot_ord(ps.prop, 'Epileptic.or.Control','MDS','bray')
-plot_ord(ps.prop, 'Epileptic.or.Control','MDS','wunifrac')
-plot_ord(ps.prop, 'Epileptic.or.Control','NMDS','bray')
-plot_ord(ps.prop, 'Epileptic.or.Control','NMDS','wunifrac')
+permanova(ps.rare.prop, 'Household', 'bray')
 ```
 
-### PERMANOVA Test
+### Weighted-Unifrac distance
 
 ```{r}
-permanova(ps.prop, 'Epileptic.or.Control', 'bray', strata = 'Household')
-permanova(ps.prop, 'Epileptic.or.Control', 'wunifrac', strata = 'Household')
+permanova(ps.rare.prop, 'Household', 'wunifrac')
 ```
 
-### PERMDISP
+# Epileptic Effect
+
+## Alpha Diversity
 
 ```{r}
-permdisp(ps.prop, 'Epileptic.or.Control', 'bray')
-permdisp(ps.prop, 'Epileptic.or.Control', 'wunifrac')
+ggplot(sam, aes(x = Epileptic.or.Control, y = Shannon)) + 
+    geom_boxplot() + geom_jitter(height = 0, width = 0.25)
+anova(lm(Shannon~Epileptic.or.Control, data = sam))
 ```
 
-## Breed Effect
+## Beta Diversity
 
-a table of \# of breed. frequency table
+### Bray-Curtis distance
 
 ```{r}
-(data.frame(sample_data(ps.prop))$Breed.Group..1.) %>% table()
+plot_ord(ps.rare.prop, 'Epileptic.or.Control','MDS','bray')
+plot_ord(ps.rare.prop, 'Epileptic.or.Control','NMDS','bray')
+permanova(ps.rare.prop, 'Epileptic.or.Control', 'bray', strata = 'Household')
+permdisp(ps.rare.prop, 'Epileptic.or.Control', 'bray')
+```
+
+### Weighted-Unifrac distance
+
+```{r}
+plot_ord(ps.rare.prop, 'Epileptic.or.Control','MDS','wunifrac')
+plot_ord(ps.rare.prop, 'Epileptic.or.Control','NMDS','wunifrac')
+permanova(ps.rare.prop, 'Epileptic.or.Control', 'wunifrac', strata = 'Household')
+permdisp(ps.rare.prop, 'Epileptic.or.Control', 'wunifrac')
+```
+
+
+# Breed Effect
+
+## Alpha Diversity
+
+```{r}
+sam.breed <- sam %>% filter(is.na(Breed.Group..1.) == FALSE)
+ggplot(sam.breed) +
+    geom_point(aes(x = Breed.Group..1., y = Shannon, colour = Breed.Group..1.)) +
+    facet_wrap(~Epileptic.or.Control) + 
+    theme(axis.text.x = element_blank(), axis.ticks.x.bottom = element_blank())
+
+anova(lm(Shannon~Household + Breed.Group..1., data = sam.breed))
+```
+
+## Beta Diversity
+
+### Bray-Curtis distance
+
+```{r}
+plot_ord(ps.rare.prop, 'Breed.Group..1.','MDS','bray')
+plot_ord(ps.rare.prop, 'Breed.Group..1.','NMDS','bray')
+permanova(ps.rare.prop, 'Household + Breed.Group..1.', 'bray')
+permdisp(ps.rare.prop, 'Breed.Group..1.', 'bray')
+```
+
+### Weighted-Unifrac distance
+
+```{r}
+plot_ord(ps.rare.prop, 'Breed.Group..1.','MDS','wunifrac')
+plot_ord(ps.rare.prop, 'Breed.Group..1.','NMDS','wunifrac')
+permanova(ps.rare.prop, 'Household + Breed.Group..1.', 'wunifrac')
+permdisp(ps.rare.prop, 'Breed.Group..1.', 'wunifrac')
+```
+
+# Drug Effect
+
+## Alpha Diversity
+
+```{r}
+sam.drug <- sam %>% filter(Epileptic.or.Control == 'Epileptic')
+ggplot(sam.drug, aes(x = Pheno.Y.N, y = Shannon)) + 
+    geom_boxplot() + geom_jitter(height = 0, width = 0.25)
+anova(lm(Shannon~Pheno.Y.N, data = sam.drug))
+```
+
+## Beta Diversity
+
+### Bray-Curtis distance
+
+```{r}
+ps.drug <- ps.rare.prop %>% subset_samples(Epileptic.or.Control == 'Epileptic')
+plot_ord(ps.drug, 'Pheno.Y.N','MDS','bray')
+plot_ord(ps.drug, 'Pheno.Y.N','NMDS','bray')
+permanova(ps.drug, 'Pheno.Y.N', 'bray')
+permdisp(ps.drug, 'Pheno.Y.N', 'bray')
+```
+
+### Weighted-Unifrac distance
+
+```{r}
+plot_ord(ps.drug, 'Pheno.Y.N','MDS','wunifrac')
+plot_ord(ps.drug, 'Pheno.Y.N','NMDS','wunifrac')
+permanova(ps.drug, 'Pheno.Y.N', 'wunifrac')
+permdisp(ps.drug, 'Pheno.Y.N', 'wunifrac')
+```
+
+
+# Sex Effect
+
+```{r}
+prop.test(xtabs(~Household+Sex, data = sam))
+```
+
+## Alpha Diversity
+
+```{r}
+ggplot(sam, aes(x = Sex, y = Shannon)) + 
+    geom_boxplot() + geom_jitter(height = 0, width = 0.25)
+anova(lm(Shannon~Sex, data = sam))
+```
+
+## Beta Diversity
+
+### Bray-Curtis distance
+
+```{r}
+plot_ord(ps.rare.prop, 'Sex','MDS','bray')
+plot_ord(ps.rare.prop, 'Sex','NMDS','bray')
+permanova(ps.rare.prop, 'Household+Sex', 'bray')
+permdisp(ps.rare.prop, 'Sex', 'bray')
+```
+
+### Weighted-Unifrac distance
+
+```{r}
+plot_ord(ps.rare.prop, 'Sex','MDS','wunifrac')
+plot_ord(ps.rare.prop, 'Sex','NMDS','wunifrac')
+permanova(ps.rare.prop, 'Household+Sex', 'wunifrac')
+permdisp(ps.rare.prop, 'Sex', 'wunifrac')
+```
+
+# Age Effect
+
+## Alpha Diversity
+
+```{r}
+sam[which(is.na(sam$Age..months.)),'Household'] 
+# remove households that have dog with unspecific age
+sam.Age <- sam %>% filter(!(Household %in% c('9', '24')))
+ggplot(sam.Age,) +
+    geom_line(aes(x = as.numeric(Household), y = Age..months., group = Household)) + 
+    geom_point(aes(x = as.numeric(Household), y = Age..months., group = Household, colour = Epileptic.or.Control)) +
+    xlab('Household') + ylab('Age in month')
+
+anova(lm(Shannon~Household+Age..months., data = sam.Age))
+```
+
+## Beta Diversity
+
+### Bray-Curtis distance
+
+```{r}
+ps.age <- ps.rare.prop %>% subset_samples(!(Household %in% c('9', '24')))
+permanova(ps.age, 'Age..months.', 'bray', strata = 'Household')
+```
+
+### Weighted-Unifrac distance
+
+```{r}
+permanova(ps.age, 'Age..months.', 'wunifrac')
 ```
 
 ```{r}
-plot_ord(ps.prop, 'Breed.Group..1.','MDS','bray')
-plot_ord(ps.prop, 'Breed.Group..1.','MDS','wunifrac')
-plot_ord(ps.prop, 'Breed.Group..1.','NMDS','bray')
-plot_ord(ps.prop, 'Breed.Group..1.','NMDS','wunifrac')
-```
-
-### PERMANOVA
-
-```{r}
-# same breed group v.s. diff breed group in household
-# check if data are paired within household
-if (!identical(sample_data(ps)$Household[seq(1,98,2)],
-               sample_data(ps)$Household[seq(1,98,2)+1])) stop('data is not paired')
-
-same.breed.group <- table(sample_data(ps)$Household, sample_data(ps)$Breed.Group..1.) %>% 
-    apply(1, function(x) any(x == 2)) # if dog's grouping are same with in each house
-same.breed.group;sum(same.breed.group)
-```
-
-Here we see 39 out of 49 household have dogs in same breed group
-
-```{r}
-permanova(ps.prop, 'Household + Breed.Group..1.', 'bray')
-permanova(ps.prop, 'Household + Breed.Group..1.', 'wunifrac')
-```
-
-### PERMANOVA Test by Epileptic and Control Group
-
-Here we
-
-```{r message=FALSE}
-ps.control <- ps.prop %>% subset_samples(Epileptic.or.Control == 'Control')
-ps.epileptic <- ps.prop %>% subset_samples(Epileptic.or.Control == 'Epileptic')
-```
-
-```{r}
-perm.breed.bray.ctl <- permanova(ps.control, 'Breed.Group..1.', 'bray')
-perm.breed.wunif.ctl <- permanova(ps.control, 'Breed.Group..1.', 'wunifrac')
-perm.breed.bray.ctl;perm.breed.wunif.ctl
-```
-
-```{r}
-perm.breed.bray.epi <- permanova(ps.epileptic, 'Breed.Group..1.', 'bray')
-perm.breed.wunif.epi <- permanova(ps.epileptic, 'Breed.Group..1.', 'wunifrac')
-perm.breed.bray.epi;perm.breed.wunif.epi
-```
-
-### Combined p value
-
-$$X^2=-2 \sum_{i=1}^k \ln \left(p_i\right)$$
-
-```{r}
-bray.p <- c(perm.breed.bray.ctl$`Pr(>F)`[1], perm.breed.bray.epi$`Pr(>F)`[1])
-# Calculate the combined p-value with fisher's method
-pchisq( -2 * sum(log(bray.p)), df = 4, lower.tail = FALSE)
-
-wunif.p <- c(perm.breed.wunif.ctl$`Pr(>F)`[1], perm.breed.wunif.epi$`Pr(>F)`[1])
-# Calculate the combined p-value with fisher's method
-pchisq( -2 * sum(log(wunif.p)), df = 4, lower.tail = FALSE)
-```
-
-With using the `weighted-unifrac` distance, there's at least one of the null hypothesis is rejected.
-
-## Drug Effect
-
-Here we are only focusing on epileptic dogs.
-
-```{r}
-plot_ord(ps.epileptic, 'Pheno.Y.N','MDS','bray')
-plot_ord(ps.epileptic, 'Pheno.Y.N','MDS','wunifrac')
-plot_ord(ps.epileptic, 'Pheno.Y.N','NMDS','bray')
-plot_ord(ps.epileptic, 'Pheno.Y.N','NMDS','wunifrac')
-```
-
-### PERMANOVA
-
-```{r}
-permanova(ps.epileptic, 'Pheno.Y.N','bray')
-permanova(ps.epileptic, 'Pheno.Y.N','wunifrac')
-```
-
-### Dispersion
-
-```{r}
-permdisp(ps.epileptic, 'Pheno.Y.N','bray')
-permdisp(ps.epileptic, 'Pheno.Y.N','wunifrac')
-```
-
-```{r}
-# within epileptic dogs
-table(sample_data(ps)$Seizure.Freedom..Y.N., sample_data(ps)$Epileptic.or.Control)
-table(sample_data(ps)$Seizure.Control..Satisfactory.Unsatisfactory., sample_data(ps)$Epileptic.or.Control)
-```
-
-## Sex Effect
-
-Does health condition related to dog's sex? Here we conduct a Chi-squared test.
-
-```{r}
-# chisq test on epi male dog v.s. female.
-# not within health condition
-tb <- table(sample_data(ps)$Sex, sample_data(ps)$Epileptic.or.Control)
-tb
-chisq.test(tb)
-```
-
-### Ordination
-
-```{r}
-plot_ord(ps, 'Sex','MDS','bray')
-plot_ord(ps, 'Sex','MDS','wunifrac')
-plot_ord(ps, 'Sex','NMDS','bray')
-plot_ord(ps, 'Sex','NMDS','wunifrac')
-```
-
-### PERMANOVA
-
-```{r}
-permanova(ps.prop, 'Household + Sex', 'bray')
-permanova(ps.prop, 'Household + Sex', 'wunifrac')
-```
-
-### PERMDISP
-
-```{r}
-permdisp(ps.prop, 'Sex', 'bray')
-permdisp(ps.prop, 'Sex', 'wunifrac')
-```
-
-## Age Effect
-
-```{r warning=FALSE}
-sam$Age..months. <- as.numeric(sam$Age..months.)
-ggplot(sam) +
-    geom_line(aes(x = as.numeric(Household), y = Age..months./12, group = Household)) + 
-    geom_point(aes(x = as.numeric(Household), y = Age..months./12, colour = Epileptic.or.Control)) +
-    xlab('Household') + ylab('Age in Year')
-
-sam.epi <- sam %>% filter(Epileptic.or.Control == 'Epileptic')
-sam.ctl <- sam %>% filter(Epileptic.or.Control == 'Control')
-age.diff <- data.frame(Household = sam.epi$Household, Age.Diff = sam.epi$Age..months. - sam.ctl$Age..months.)
-ggplot(age.diff) +
-    geom_bar(aes(x = as.numeric(Household), y = Age.Diff/12), stat = 'identity') + 
-    xlab('Household') + ylab('Age Difference in Year')
-```
-
-
-### PERMANOVA
-
-```{r}
-permanova(ps.prop, 'Household + Age..months.', 'bray')
-permanova(ps.prop, 'Household + Age..months.', 'wunifrac')
+sessioninfo::session_info()
 ```

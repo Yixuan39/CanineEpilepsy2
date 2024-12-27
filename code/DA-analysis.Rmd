@@ -1,312 +1,296 @@
 ---
-title: "DA-analysis"
+title: "Differential Abundance Analysis"
 author: "Yixuan Yang"
 date: "`r Sys.Date()`"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    self_contained: true
 ---
 
 # Set Up
 
 ```{r, message=FALSE}
-set.seed(255)
+rm(list = ls())
+set.seed(2024)
 library(tidyverse)
 library(phyloseq)
 library(here)
 library(gt)
+library(GGally)
+library(patchwork)
+library(ggcorrplot)
 theme_set(theme_bw())
+
+# DA tools
+library(ALDEx2)
+library(ANCOMBC)
+library(corncob)
+library(MicrobiomeStat) # for Linda
 
 ps <- readRDS(here('data','following_study','ps.rds'))
 ps.rare <- readRDS(here('data','following_study','ps_rarefied.rds'))
-```
+ps.present <- ps %>% transform_sample_counts(sign)
 
-
-# T-test
-
-The design of this study is paired by household, and we want use t-test to compare dogs within households. Here we check if the data is really paired.
-
-```{r message=FALSE}
-# check if data are paired
-if (!identical(sample_data(ps)$Household[seq(1,102,2)],
-               sample_data(ps)$Household[seq(1,102,2)+1])) stop('data is not paired')
-if (!identical(sample_data(ps.rare)$Household[seq(1,98,2)],
-               sample_data(ps.rare)$Household[seq(1,98,2)+1])) stop('rarefied data is not paired')
-pair1 <- sign(otu_table(ps))[seq(1,102,2),]
-pair2 <- sign(otu_table(ps))[seq(1,102,2) + 1,]
-exist.by.household <- colSums((pair1 + pair2)>=1)
-
-test.filter <- function(n_household, exist.by.household, ps) {
-    asv.names <- names(exist.by.household[exist.by.household>=n_household])
-    ori.read.depth <- rowSums(otu_table(ps))
-    read.depth <- rowSums(otu_table(ps)[,asv.names])/ori.read.depth
-    sum_tb <- data.frame(taxon_size = length(asv.names)) %>% bind_cols(read.depth %>% t)
-    return(sum_tb)
-}
-test.filter.data <- data.frame()
-for (i in 0:51){
-    test.filter.data <- test.filter.data %>% bind_rows(test.filter(i, exist.by.household, ps))
-}
-test.filter.data.long <- test.filter.data %>% 
-    pivot_longer(starts_with('Netti'), names_to = 'sample', values_to = 'read_depth')
-
-ggplot(test.filter.data.long, aes(x = read_depth, y = taxon_size, group = sample)) +
-    geom_point(size = 0.1) + geom_line(linewidth = 0.1) + scale_x_reverse() +
-    geom_hline(yintercept = test.filter.data$taxon_size[21], color = 'blue') +
-    xlab('proportion reads remain') + ylab('number of ASVs') + labs(title = 'Trace of Filter Threshold')
-
-# only keep asv that appears in more than 20 households
-asv.names <- names(exist.by.household[exist.by.household>=20])
-otu_table(ps) <- otu_table(ps)[,asv.names]
-otu_table(ps.rare) <- otu_table(ps.rare)[,asv.names]
-ps;ps.rare
-
-tax <- tax_table(ps)
 alpha <- 0.05
 max.cores <- parallel::detectCores()
 ```
 
+# Taxa Filtering
 
-## ALDEx2 pairwise T-test
+Before the DA analysis, we want to check the frequency of ASV present in each household. For ASV with low frequency across households, we can ignore them so that we can reduce the number of tests and save computational resources.
 
-```{r}
-library(ALDEx2)
-# aldex pairwise t test
-# central log ratio transformed data
-x <- aldex.clr(t(otu_table(ps)), sample_data(ps)$Epileptic.or.Control, mc.samples=128, denom="all")
-aldex.tt <- aldex.ttest(x, paired.test = TRUE) %>% 
-    cbind(aldex.effect(x, CI = TRUE, paired.test = TRUE)) %>% 
-    rownames_to_column('taxon')
-tax[aldex.tt$taxon,] %>% 
-    data.frame() %>% 
-    dplyr::select(Phylum, Genus) %>% 
-    cbind(log2fold = aldex.tt$diff.btw,
-          p = aldex.tt$we.ep) %>% 
-    rownames_to_column('taxon') %>% 
-    arrange(str_rank(taxon, numeric = TRUE)) -> aldex.tt.res
-aldex.tt.res %>% filter(p <= alpha) %>% head(20) %>% gt()
+```{r} 
+# check ASV present by household
+present <- ps %>%
+    transform_sample_counts(sign) %>% 
+    psmelt() %>%
+    group_by(Household, OTU) %>%
+    summarise(present.in.house = sign(sum(Abundance)), .groups = 'drop') %>% 
+    group_by(OTU) %>%
+    summarise(house.freq = sum(present.in.house), .groups = 'drop') %>% 
+    arrange(str_rank(OTU, numeric = TRUE))
+head(present)
 ```
 
-## regular pairwise T-test on rarefied data
+Tracing the number of ASV retained and average read depth after filtering
 
-```{r}
-paired.data <- bind_cols(data.frame(sample_data(ps.rare)),
-                         data.frame(otu_table(ps.rare)))
-paired.data.x <- paired.data[which(paired.data$Epileptic.or.Control == 'Epileptic'),]
-paired.data.y <- paired.data[which(paired.data$Epileptic.or.Control == 'Control'),]
-# check if data are paired
-if(!identical(paired.data.x$Household, paired.data.y$Household)) stop('paired data household not equal')
-
-pair.t.test <- function(ASV, group = 'Epileptic.or.Control', data.x = paired.data.x, data.y = paired.data.y) {
-    x <- paired.data.x[,ASV]
-    y <- paired.data.y[,ASV]
-    lfc <- mean(log2(x+1))-mean(log2(y+1)) # calculate log2 fold change
-    result <- t.test(x,y, paired = TRUE, alternative = 'two.sided')
-    p.value <- result$p.value
-    return(c(lfc, p.value))
+```{r} 
+# test for filtering threshold
+test.filter <- function(ps, present, threshold) {
+    ASV <- present %>% filter(house.freq >= threshold) %>% pull(OTU)
+    sub.ps.otu <- ps %>% prune_taxa(ASV, .) %>% otu_table()
+    retained.read <- sub.ps.otu %>% rowSums() %>% mean()
+    retained.taxa <- sub.ps.otu %>% ncol()
+    orig.read <- otu_table(ps) %>% rowSums() %>% mean()
+    orig.taxa <- otu_table(ps) %>% ncol()
+    return(data.frame(taxon_size = retained.taxa/orig.taxa, average.read.depth = retained.read/orig.read))
 }
-paired.tt <- t(sapply(taxa_names(ps.rare), pair.t.test)) %>% 
-    data.frame() %>% 
-    rownames_to_column('taxon')
-colnames(paired.tt)[2:3] <- c('log2fold', 'paired.tt')
+trace <- map_dfr(1:49, function(i) test.filter(ps=ps, present=present, threshold=i))
 
-tax[paired.tt$taxon,] %>% 
-    data.frame() %>% 
-    dplyr::select(Phylum, Genus) %>% 
-    cbind(log2fold = paired.tt$log2fold, p = paired.tt$paired.tt) %>% 
-    rownames_to_column('taxon') %>% 
-    arrange(str_rank(taxon, numeric = TRUE)) -> paired.tt.res
-
-paired.tt.res %>% filter(p <= alpha) %>% head(20) %>% gt()
+ggplot(trace, aes(x = average.read.depth, y = taxon_size)) +
+    geom_point() +
+    geom_line() + 
+    scale_x_reverse(labels = scales::percent) +
+    scale_y_continuous(labels = scales::percent) +
+    xlab('percentage of reads remained') +
+    ylab('percentage of ASV remained') 
 ```
 
-# Differential Abundance Test With GLM
+We are showing percentage of read and ASV remained if we keep ASVs present in at least n households. In this study, we choose to keep ASVs that present in at least 5 households to retain 97% of reads and only test for 20% of ASVs.
 
-We have found that the `Household` could be a strong factor that affect dogs' microbiome. To remove the effect of `Household` we propose this model:
+```{r} 
+head(trace)
+# only keep ASVs present in more than 5 households
+keep <- filter(present, house.freq >= 5) %>% pull(OTU)
+```
+
+Basic information of non-rarefied data
+
+```{r} 
+ps <- ps %>% prune_taxa(keep, .)
+tax <- tax_table(ps)
+ps
+```
+
+Basic information of rarefied data
+
+```{r} 
+ps.rare <- ps.rare %>% prune_taxa(keep, .)
+ps.rare
+```
+
+# Differential Abundance Analysis
+
+## ALDEx2
+
+### pairwise T-test
+
+```{r}
+clr.data <- aldex.clr(t(otu_table(ps)), sample_data(ps)$Epileptic.or.Control, mc.samples=128, denom="all")
+aldex.t.test <- data.frame(aldex.ttest(clr.data, paired.test = TRUE), aldex.effect(clr.data, paired.test = TRUE)) %>% 
+    rownames_to_column('taxon') %>% 
+    dplyr::select(taxon,diff.btw, we.ep) 
+
+colnames(aldex.t.test)[2:3] <- c('LFC', 'p.value')
+    
+aldex.t.test %>% arrange(str_rank(taxon, numeric = TRUE)) %>% head()
+```
+
+### GLM test
 
 $$ASV_i \sim Epileptic.or.Control + Household$$
 
-## ALDEx2 GLM
-
 ```{r}
-# Construct model matrix
 model <- model.matrix(~ Epileptic.or.Control + Household, data.frame(sample_data(ps)))
-
-# Perform CLR transformation and Monte Carlo sampling
-x <- aldex.clr(t(otu_table(ps)), model, mc.samples=128, denom="all", verbose = FALSE)
-aldex.glm <- aldex.glm(x, model) %>% 
-    cbind(aldex.glm.effect(x, verbose = FALSE)) %>% 
-    rownames_to_column('taxon')
-```
-
-```{r}
-tax[aldex.glm$taxon,] %>% 
-    data.frame() %>% 
-    dplyr::select(Phylum, Genus) %>% 
-    cbind(log2fold = aldex.glm$Epileptic.or.ControlEpileptic.diff.btw,
-          p = aldex.glm$`Epileptic.or.ControlEpileptic:pval`) %>% 
+clr.data <- aldex.clr(t(otu_table(ps)), model, mc.samples=128, denom="all")
+aldex.glm.test <- data.frame(aldex.glm(clr.data, model), aldex.glm.effect(clr.data, verbose = FALSE)) %>% 
     rownames_to_column('taxon') %>% 
-    arrange(str_rank(taxon, numeric = TRUE)) -> aldex.glm.res
-aldex.glm.res %>% filter(p <= alpha) %>% head(20) %>% gt()
+    dplyr::select(taxon, `Epileptic.or.ControlEpileptic.diff.btw`, `Epileptic.or.ControlEpileptic.pval`)
+colnames(aldex.glm.test)[2:3] <- c('LFC', 'p.value')
+
+aldex.glm.test %>% arrange(str_rank(taxon, numeric = TRUE)) %>% head()
 ```
 
 ## ANCOMBC
 
-```{r, message=FALSE}
-library(ANCOMBC)
-ancombc.da <- ancombc(data = ps,
-                      formula = 'Epileptic.or.Control + Household',
-                      n_cl = max.cores)
-```
+```{r message=FALSE}
+ancombc.test <- ancombc(data = ps,
+                        formula = 'Epileptic.or.Control + Household',
+                        prv_cut = 0,
+                        n_cl = max.cores)
 
-```{r}
-tax_table(ps)[ancombc.da$res$p_val$taxon,] %>% 
-    data.frame() %>% 
-    rownames_to_column('taxon') %>% 
-    left_join(ancombc.da$res$lfc, by = 'taxon') %>% 
-    mutate(log2fold = log2(exp(Epileptic.or.ControlEpileptic))) %>% # convert natural log to log2
-    dplyr::select(taxon,Phylum, Genus, log2fold) %>% 
-    left_join(ancombc.da$res$p_val, by = 'taxon') %>% 
-    mutate(p = Epileptic.or.ControlEpileptic) %>% 
-    dplyr::select(taxon,Phylum, Genus, log2fold,p) %>% 
-    arrange(str_rank(taxon, numeric = TRUE)) -> ancombc.res
-ancombc.res %>% filter(p <= alpha) %>% head(20) %>% gt()
+ancombc.test <- data.frame(taxon = ancombc.test$res$lfc$taxon,
+                           LFC = ancombc.test$res$lfc$Epileptic.or.ControlEpileptic,
+                           p.value = ancombc.test$res$p_val$Epileptic.or.ControlEpileptic)
+
+ancombc.test %>% arrange(str_rank(taxon, numeric = TRUE)) %>% head
 ```
 
 ## corncob
 
 ```{r}
-library(corncob)
-corncob.da <- differentialTest(formula= ~ Epileptic.or.Control + Household,
-                               phi.formula = ~ 1,
-                               formula_null = ~ Household,
-                               phi.formula_null = ~ 1,
-                               test = 'LRT',
-                               data = ps,
-                               taxa_are_rows = FALSE)
-```
+corncob.test <- differentialTest(formula= ~ Epileptic.or.Control + Household,
+                                 phi.formula = ~ 1,
+                                 formula_null = ~ Household,
+                                 phi.formula_null = ~ 1,
+                                 test = 'LRT',
+                                 fdr_cutoff = 1,
+                                 data = ps,
+                                 taxa_are_rows = FALSE)
 
-```{r}
 # convert corcob result to log2fold difference
 corncob.extract.result <- function(corncob.da, i) {
     regression.result <- corncob.da$all_models[[i]]$coefficients
     ps <- corncob.da$data
-    read.depth <- rowSums(otu_table(ps))
-    treatment.name <- ps %>% sample_data() %>% data.frame() %>% filter(Epileptic.or.Control == 'Epileptic') %>% rownames()
-    control.name <- ps %>% sample_data() %>% data.frame() %>% filter(Epileptic.or.Control == 'Control') %>% rownames()
-    read.depth.treatment <- read.depth[treatment.name]
-    read.depth.control <- read.depth[control.name]
+    read.depth.epileptic <- ps %>% subset_samples(Epileptic.or.Control == 'Epileptic') %>% otu_table() %>% rowSums()
+    read.depth.control <- ps %>% subset_samples(Epileptic.or.Control == 'Control') %>% otu_table() %>% rowSums()
     # p value
-    p <- corncob.da$all_models[[i]]$coefficients['mu.Epileptic.or.ControlEpileptic','Pr(>|t|)']
+    p <- corncob.da$p[i]
     # relative abundance
-    control.ra <- regression.result['mu.(Intercept)','Estimate'] %>% invlogit()
-    treatment.ra <- regression.result[c('mu.(Intercept)','mu.Epileptic.or.ControlEpileptic'),'Estimate'] %>% sum() %>% invlogit()
-    ra.diff <- treatment.ra - control.ra
-    log2fold <- log2((mean(read.depth.treatment)*treatment.ra) / (mean(read.depth.control)*control.ra))
-    summary <- c(log2fold,ra.diff,p)
+    RA.ctl <- regression.result['mu.(Intercept)','Estimate'] %>% invlogit()
+    RA.epi <- regression.result[c('mu.(Intercept)','mu.Epileptic.or.ControlEpileptic'),'Estimate'] %>% sum() %>% invlogit()
+    LFC <- log2((mean(read.depth.epileptic)*RA.epi) / (mean(read.depth.control)*RA.ctl))
+    summary <- data.frame(LFC = LFC, p.value = p) %>% rownames_to_column('taxon')
     return(summary)
 }
-corncob.sum.tb <- sapply(1:length(taxa_names(ps)), function(i) corncob.extract.result(corncob.da, i)) %>% t() %>% data.frame()
-rownames(corncob.sum.tb) <- taxa_names(ps)
-colnames(corncob.sum.tb) <- c('log2fold','ra.diff','p')
-```
-
-
-```{r}
-corncob.taxa <- names(corncob.da$p[which(corncob.da$p < alpha)])
-# p value in the table is term specific, but significance is determined by wald test
-corncob.res <- data.frame(tax[,c(2,6)], corncob.sum.tb) %>%
-    rownames_to_column('taxon') %>% 
-    #cbind(wald.p = corncob.da$p)
-    mutate(p = corncob.da$p) %>% 
-    arrange(str_rank(taxon, numeric = TRUE))
-corncob.res %>% filter(taxon %in% corncob.taxa) %>% head(20) %>% gt()
+corncob.test <- map_dfr(1:length(taxa_names(ps)), function(i) corncob.extract.result(corncob.test, i)) 
+corncob.test %>% arrange(str_rank(taxon, numeric = TRUE)) %>% head
 ```
 
 ## LinDA
 
 ```{r}
-library(MicrobiomeStat)
-linda.da <- linda(t(data.frame(otu_table(ps))),
+linda.test <- linda(t(data.frame(otu_table(ps))),
                    data.frame(sample_data(ps)),
                    formula = '~ Epileptic.or.Control + Household',
                    feature.dat.type = 'count',
                    n.cores = max.cores,
                    verbose = FALSE)
+
+linda.test <- linda.test$output$Epileptic.or.ControlEpileptic %>% 
+    dplyr::select(log2FoldChange, pvalue) %>%
+    rownames_to_column('taxon') 
+colnames(linda.test)[2:3] <- c('LFC', 'p.value')
+
+linda.test %>% arrange(str_rank(taxon, numeric = TRUE)) %>% head()
 ```
 
+## pairwise T-test on rarefied data
+
 ```{r}
-linda.res <- linda.da$output$Epileptic.or.ControlEpileptic %>% 
-    rownames_to_column('taxon') %>% 
-    arrange(str_rank(taxon, numeric = TRUE))
-tax[linda.res$taxon,] %>% 
-    data.frame() %>% 
-    dplyr::select(Phylum, Genus) %>% 
-    cbind(log2fold = linda.res$log2FoldChange, p = linda.res$pvalue) %>% 
-    rownames_to_column('taxon') %>% 
-    arrange(str_rank(taxon, numeric = TRUE)) -> linda.res
-linda.res %>% filter(p <= alpha) %>% head(20) %>% gt()
+paired.t.test <- function(data) {
+    splited.data <- data %>% 
+        arrange(Household, Epileptic.or.Control) %>% 
+        split(.$Epileptic.or.Control)
+    t.test.result <- t.test(splited.data[['Epileptic']]$Abundance,
+                            splited.data[['Control']]$Abundance,
+                            paired = TRUE, alternative = 'two.sided')
+    data.frame(taxon = unique(data$OTU),
+               LFC = log2(mean(splited.data[['Epileptic']]$Abundance + 1)) - log2(mean(splited.data[['Control']]$Abundance + 1)),
+               p.value = t.test.result$p.value)
+}
+
+pairwise.t.test <- psmelt(ps.rare) %>%
+    group_by(OTU) %>%
+    group_split() %>%
+    map_dfr(paired.t.test)
+
+pairwise.t.test %>% arrange(str_rank(taxon, numeric = TRUE)) %>% head()
 ```
 
-# Summary
+
+# Comparative Analysis
+
+Here we compare the results of different methods. We first show the top 10 ASVs with the smallest p-value for each method.
 
 ```{r}
-combined.result <- bind_rows(list(aldex.tt = aldex.tt.res,
-                                  paired.tt = paired.tt.res,
-                                  aldex.glm = aldex.glm.res,
-                                  ancombc = ancombc.res,
-                                  corncob = dplyr::select(corncob.res, -ra.diff),
-                                  linDA = linda.res),
-                             .id = 'method')
-combined.result$taxon <- factor(combined.result$taxon, levels = unique(str_sort(combined.result$taxon, numeric = TRUE)))
+test.results <- list("ALDEx2 t test" = aldex.t.test,
+                     "ALDEx2 GLM" = aldex.glm.test,
+                     "ANCOM-BC" = ancombc.test,
+                     "corncob" = corncob.test,
+                     "LinDA" = linda.test, 
+                     "paired t test" = pairwise.t.test) %>% 
+    bind_rows(.id = 'method') %>% 
+    group_by(method) %>% arrange(str_rank(taxon, numeric = TRUE)) %>% ungroup()
 
-p.value.tb <- combined.result %>% 
-    # Here convert corncob p value to corncob wald test p value
-    #mutate(p = if_else(method == 'corncob', wald.p, p)) %>% 
-    dplyr::select(taxon, method, p) %>% 
-    pivot_wider(names_from = method, values_from = p) %>% 
-    column_to_rownames('taxon')
-sig <- (p.value.tb <= alpha)
-sig[is.na(sig)] <- FALSE
+p.value.tb <- test.results %>% 
+    dplyr::select(taxon, method, p.value) %>% 
+    pivot_wider(names_from = method, values_from = p.value) %>%
+    rowwise() %>%
+    mutate(SignificantCount = sum(c_across(-taxon) < alpha)) %>% 
+    arrange(desc(SignificantCount))
 
-keep <- which(rowSums(sig) >= 3)
-sig[keep,] %>% 
-    data.frame() %>%
-    rownames_to_column('taxon') %>% 
-    gt() %>%
-    data_color(columns = colnames(sig),
-               fn = scales::col_factor(palette = scales::hue_pal()(2),
-                                       domain = c(FALSE, TRUE)))
+top.p <- p.value.tb %>%
+    dplyr::select(-SignificantCount)
+
+tb <- top.p %>% 
+    head(10) %>% 
+    gt() %>% 
+    fmt_number(decimals = 4) %>% 
+    data_color(columns = colnames(p.value.tb)[2:7],
+               colors = scales::col_bin(palette = c(scales::hue_pal()(1), "transparent"),
+                                        bins = c(-Inf, 0.05, Inf)))
+tb
+# gtsave(tb, file = here('figures','top10_p.png'))
 ```
 
+Effect size of top 10 ASVs for each method.
+
 ```{r}
-# only keep ASV jointly agreed across different methods.
-combined.result.sub <- combined.result %>% 
-    filter(taxon %in% rownames(sig)[keep])# %>% 
-    # mutate(new.p = if_else(method == 'corncob', wald.p, p)) %>% 
-    # mutate(significant = if_else(new.p <= alpha&!is.na(new.p), TRUE, FALSE))
-    #filter(p <= alpha, !(method == 'corncob'&is.na(wald.p)))
-ggplot(combined.result.sub) +
-    geom_bar(aes(x = taxon, y = log2fold, fill = method), position="dodge", stat = 'identity', width = 0.7) +
-    #scale_color_manual(values = c('black','white')) +
-    theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
-    ylab('log 2 fold change')
+test.results$taxon <- factor(test.results$taxon,
+                             levels = str_sort(unique(test.results$taxon),
+                                               numeric = TRUE))
+effect.plot <- test.results %>% 
+    filter(method != 'corncob') %>% 
+    filter(taxon %in% head(top.p$taxon, 10)) %>% 
+    ggplot() +
+        geom_bar(aes(x = taxon, y = LFC, fill = method),
+                 position="dodge", stat = 'identity', width = 0.7) +
+        theme(axis.text.x = element_text(angle = 60, hjust = 1)) 
+effect.plot
 ```
 
-correlation of p-value for each method (except for corncob).
+correlation of p-value for each method.
 
 ```{r}
-cor.tb <- combined.result %>% 
-    dplyr::select(taxon, method, p) %>% 
-    pivot_wider(names_from = method, values_from = p) %>% 
+top.p %>%  
     column_to_rownames('taxon') %>% 
-    na.omit() %>% 
-    cor()
-cor.tb
-corrplot::corrplot(cor.tb,
-                   method = 'color',
-                   type = "upper",
-                   col = colorRampPalette(c("blue", "white", "red"))(100),
-                   tl.col = "black",
-                   addCoef.col = "black")
+    ggpairs(progress = FALSE)
+
+cor.plot <- top.p %>%  
+    column_to_rownames('taxon') %>% 
+    cor() %>% 
+    ggcorrplot(lab = TRUE, type = 'lower', show.legend = FALSE, tl.cex = 10)
+cor.plot
 ```
 
+```{r include=FALSE}
+cor.plot + effect.plot + plot_annotation(tag_levels = 'a')
+```
+
+```{r}
+sessioninfo::session_info()
+```
 
