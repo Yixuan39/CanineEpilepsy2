@@ -21,6 +21,7 @@ library(tidyverse)
 library(here)
 library(phyloseq)
 library(vegan)
+library(rstatix)
 set.seed(2024)
 theme_set(theme_bw())
 max.core <- parallel::detectCores()
@@ -85,8 +86,7 @@ In this section, we want to estimate the effect of different factors on the micr
 ```{r}
 ggplot(sam,aes(x = as.numeric(Household), y = Shannon, group = Household)) +
     geom_point() + geom_line() + xlab('Household')
-
-anova(lm(Shannon~Household, data = sam))
+anova_test(Shannon~Household, data = sam, type = 1)
 ```
 
 Here we see the Shannon diversity index is significantly different among households.
@@ -112,7 +112,7 @@ permanova(ps.rare.prop, 'Household', 'wunifrac')
 ```{r}
 ggplot(sam, aes(x = Epileptic.or.Control, y = Shannon)) + 
     geom_boxplot() + geom_jitter(height = 0, width = 0.25)
-anova(lm(Shannon~Epileptic.or.Control, data = sam))
+anova_test(Shannon~Household+Epileptic.or.Control, data = sam, type = 1)
 ```
 
 ## Beta Diversity
@@ -147,7 +147,7 @@ ggplot(sam.breed) +
     facet_wrap(~Epileptic.or.Control) + 
     theme(axis.text.x = element_blank(), axis.ticks.x.bottom = element_blank())
 
-anova(lm(Shannon~Household + Breed.Group..1., data = sam.breed))
+anova_test(Shannon~Household + Breed.Group..1., data = sam.breed, type = 1)
 ```
 
 ## Beta Diversity
@@ -178,7 +178,7 @@ permdisp(ps.rare.prop, 'Breed.Group..1.', 'wunifrac')
 sam.drug <- sam %>% filter(Epileptic.or.Control == 'Epileptic')
 ggplot(sam.drug, aes(x = Pheno.Y.N, y = Shannon)) + 
     geom_boxplot() + geom_jitter(height = 0, width = 0.25)
-anova(lm(Shannon~Pheno.Y.N, data = sam.drug))
+anova_test(Shannon~Pheno.Y.N, data = sam.drug, type = 1)
 ```
 
 ## Beta Diversity
@@ -214,7 +214,7 @@ prop.test(xtabs(~Household+Sex, data = sam))
 ```{r}
 ggplot(sam, aes(x = Sex, y = Shannon)) + 
     geom_boxplot() + geom_jitter(height = 0, width = 0.25)
-anova(lm(Shannon~Sex, data = sam))
+anova_test(Shannon~Household+Sex, data = sam, type = 1)
 ```
 
 ## Beta Diversity
@@ -250,7 +250,7 @@ ggplot(sam.Age,) +
     geom_point(aes(x = as.numeric(Household), y = Age..months., group = Household, colour = Epileptic.or.Control)) +
     xlab('Household') + ylab('Age in month')
 
-anova(lm(Shannon~Household+Age..months., data = sam.Age))
+anova_test(Shannon~Household+Age..months., data = sam.Age, type = 1)
 ```
 
 ## Beta Diversity

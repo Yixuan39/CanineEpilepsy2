@@ -21,6 +21,7 @@ set.seed(2024)
 library(here)
 library(phyloseq)
 library(tidyverse)
+library(gt)
 theme_set(theme_bw())
 
 ps.rarefied <- readRDS(here('data','following_study','ps_rarefied.rds'))
@@ -100,34 +101,61 @@ sapply(1:nrow(pair1),function(i) paired.data[[1]]$Predominant.Breed[i] == paired
 Now, we can calculate the Jaccard similarity between the epileptic dog and the two control dogs.
 
 ```{r}
-get.similarity <- function(pair1, pair2, dist) {
-    sapply(1:nrow(pair1), function(i) {dist[pair1[i,'Sample'], pair2[i,'Sample']]})
+get.similarity <- function(ps, paired.data, method) {
+    dissimilarities <- if(method == 'jaccard') {
+        phyloseq::distance(ps, method = method, binary = TRUE)
+    } else {
+        phyloseq::distance(ps, method = method)
+    }
+    dist <-  as.matrix(1 - dissimilarities)
+    same.household.similarity <- sapply(1:nrow(paired.data[[1]]), function(i) {dist[paired.data[[1]][i,'Sample'], paired.data[[2]][i,'Sample']]})
+    diff.household.similarity <- sapply(1:nrow(paired.data[[1]]), function(i) {dist[paired.data[[1]][i,'Sample'], paired.data[[3]][i,'Sample']]})
+    data.frame(pair1, method, same.household.similarity, diff.household.similarity)
 }
-# find jaccard similarity
-similarity <- as.matrix(1-phyloseq::distance(ps.rarefied, method = 'jaccard', binary = TRUE))
-paired.data[[1]]$same.household.similarity <- get.similarity(paired.data[[1]], paired.data[[2]], similarity)
-paired.data[[1]]$diff.household.similarity <- get.similarity(paired.data[[1]], paired.data[[3]], similarity)
+
+household.similarity <- map_dfr(c('jaccard', 'bray', 'wunifrac'), function(method) get.similarity(ps.rarefied, paired.data, method))
 ```
 
 Visualize the similarity between dogs from same/different households. Here we see most of the dogs from the same household have higher similarity than dogs from different households.
 
 ```{r}
-ggplot(paired.data[[1]]) +
+household.similarity$method <- factor(household.similarity$method, levels = c('jaccard', 'bray', 'wunifrac'))
+ggplot(household.similarity) +
+    geom_point(aes(x = diff.household.similarity, y = same.household.similarity)) +
+    geom_abline(intercept = 0, slope = 1, color = 'blue') +
+    facet_wrap(~method) +
+    labs(x = 'Similarity Between Different Household', y = 'Similarity Between Same Household')
+
+household.similarity %>% 
+  pivot_longer(c('same.household.similarity', 'diff.household.similarity'), names_to = 'type', values_to = 'similarity') %>%
+  ggplot() +
+      geom_boxplot(aes(x = type, y = similarity)) +
+      facet_wrap(~method, scale = 'free_y') +
+      labs(x = 'Similarity Between Different Household', y = 'Similarity Between Same Household')
+```
+
+```{r}
+household.similarity %>% 
+    filter(method == 'jaccard') %>%
+    ggplot() +
     geom_text(aes(x = diff.household.similarity, y = same.household.similarity, label = Household), check_overlap = TRUE) +
     geom_abline(intercept = 0, slope = 1, color = 'blue') +
+    facet_wrap(~method) +
     tune::coord_obs_pred() +
-    labs(title = 'ASV similarity (Jaccard Similarity)',
-         x = 'Jaccard Similarity between Dogs from Different Households',
-         y = 'Jaccard Similarity between Dogs from Same Households') 
+    labs(x = 'Similarity Between Different Household', y = 'Similarity Between Same Household')
 ```
+
 
 Pairwise t test
 
 ```{r}
-t.test(paired.data[[1]]$same.household.similarity,
-       paired.data[[1]]$diff.household.similarity, 
-       paired = TRUE,
-       alternative = 'greater')
+household.similarity %>% 
+    split(.$method) %>%
+    lapply(function(x) t.test(x$same.household.similarity,
+                              x$diff.household.similarity, 
+                              paired = TRUE,
+                              alternative = 'greater'))
+  
 ```
 
 # ASV Sharing Rate
@@ -157,7 +185,8 @@ df <- prevalence %>%
 ggplot(data = df, aes(x = prevalence, y = share.rate)) + 
     geom_point() +
     stat_function(fun = function(x) x^2, color = "blue", size = 1)  +
-    coord_fixed()
+    coord_fixed() +
+    labs(x = 'Prevalence of ASV', y = 'Proportion of ASV Present in Both Dogs')
 ```
 
 Pairwise t test (paired by each ASV)
@@ -171,7 +200,7 @@ t.test(df$share.rate, df$prevalence^2, paired = TRUE, alternative = 'greater')
 To see if an ASV is significantly more shared than expected, we conduct a binomial test for each ASV. Here we show the top 20 ASVs that are significantly more shared.
 
 ```{r}
-df %>% rowwise() %>% 
+shared.ASV <- df %>% rowwise() %>% 
     mutate(fold.diff=(share.rate/prevalence^2)) %>% 
     mutate(residual=(share.rate-prevalence^2)) %>%
     mutate(binom.test = binom.test(x=share.rate*49,
@@ -179,8 +208,9 @@ df %>% rowwise() %>%
                                   p=prevalence^2,
                                   alternative='greater')$p.value) %>% 
     arrange(binom.test) %>% 
-    filter(binom.test <= 0.05) %>%
-    head(20) %>% gt::gt()
+    filter(binom.test <= 0.05)
+nrow(shared.ASV)
+shared.ASV %>% head(20) %>% gt()
 ```
 
 ```{r}

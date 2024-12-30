@@ -90,7 +90,6 @@ Basic information of non-rarefied data
 
 ```{r} 
 ps <- ps %>% prune_taxa(keep, .)
-tax <- tax_table(ps)
 ps
 ```
 
@@ -235,6 +234,11 @@ test.results <- list("ALDEx2 t test" = aldex.t.test,
     bind_rows(.id = 'method') %>% 
     group_by(method) %>% arrange(str_rank(taxon, numeric = TRUE)) %>% ungroup()
 
+tax <- tax_table(ps) %>% 
+    as.data.frame() %>% 
+    dplyr::select(Genus) %>% 
+    rownames_to_column('taxon')
+
 p.value.tb <- test.results %>% 
     dplyr::select(taxon, method, p.value) %>% 
     pivot_wider(names_from = method, values_from = p.value) %>%
@@ -246,6 +250,7 @@ top.p <- p.value.tb %>%
     dplyr::select(-SignificantCount)
 
 tb <- top.p %>% 
+    # left_join(tax, by = 'taxon') %>% 
     head(10) %>% 
     gt() %>% 
     fmt_number(decimals = 4) %>% 

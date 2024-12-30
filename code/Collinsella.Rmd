@@ -72,8 +72,8 @@ otu.df %>%
 
 ```{r message=FALSE}
 collinsella.prop <- readRDS(here('data','following_study','ps_rarefied.rds')) %>%
-    subset_taxa(Genus == 'Collinsella') %>% 
     transform_sample_counts(function(x) x / sum(x)) %>% 
+    subset_taxa(Genus == 'Collinsella') %>% 
     psmelt()
 collinsella.prop$OTU <- factor(collinsella.prop$OTU, levels = str_sort(unique(collinsella.prop$OTU), numeric = TRUE))
 ggplot(collinsella.prop) +

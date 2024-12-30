@@ -21,7 +21,7 @@ library(here)
 library(Biostrings)
 library(ShortRead)
 library(patchwork)
-library(dada2); packageVersion("dada2")
+library(dada2)
 ```
 
 # Read in all sample files
@@ -117,7 +117,7 @@ plotErrors(errR)
 
 apply DADA2 algorithm
 
-```{r echo=FALSE}
+```{r}
 ddF <- dada(filtF, err=errF, pool="pseudo", multithread=TRUE)
 ddR <- dada(filtR, err=errR, pool="pseudo", multithread=TRUE)
 ```

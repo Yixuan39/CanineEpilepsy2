@@ -108,7 +108,7 @@ Here, we use DECIPHER package to align sequence and then construct phylogenetic 
 ```{r, eval = FALSE}
 set.seed(2024)
 alignment <- AlignSeqs(refseq(ps), processors=NULL) 
-tree <- Treeline(alignment, processors=NULL)
+tree <- Treeline(alignment, method = "ME", processors=NULL)
 WriteDendrogram(tree, file=here('data','following_study','tree.nwk'))
 ```
 

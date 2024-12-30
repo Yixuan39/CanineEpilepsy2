@@ -16,6 +16,7 @@ rm(list = ls())
 library(here)
 library(phyloseq)
 library(tidyverse)
+set.seed(2024)
 theme_set(theme_bw())
 ```
 
@@ -24,8 +25,8 @@ theme_set(theme_bw())
 Both pilot and following study data are loaded
 
 ```{r}
-ps <- read_rds(here('data','following_study','ps.rds'))
-ps.pilot <- read_rds(here('data','pilot_study','ps.rds'))
+ps <- read_rds(here('data','following_study','ps_rarefied.rds'))
+ps.pilot <- read_rds(here('data','pilot_study','ps_rarefied.rds'))
 ```
 
 # Data Profile
