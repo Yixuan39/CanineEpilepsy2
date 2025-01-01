@@ -79,15 +79,19 @@ Double-check if microbial pattern is consistent with health condition. Here we d
 
 ```{r}
 ps.all <- merge_phyloseq(ps, ps.pilot) %>% 
-  filter_taxa(function (x) sum(x) > 100, prune = TRUE) %>%
+  tax_glom('Phylum') %>% 
+  transform_sample_counts(function(x) x / sum(x)) %>%
   psmelt()
+ps.all$Phylum <- as.character(ps.all$Phylum)
+ps.all$Phylum[ps.all$Abundance < 0.01] <- 'Others'
 ps.all$study <- factor(ps.all$study, levels = c('pilot', 'following'))
 
 ggplot(data = ps.all) + 
-    geom_col(aes(Sample, Abundance, fill = Phylum),position = "fill", width = 1) +
-    theme(axis.text.x=element_blank(),
-          axis.ticks.x=element_blank())  +
-  facet_grid(. ~ study, scales="free_x", space="free_x")
+  geom_col(aes(Sample, Abundance, fill = Phylum),position = "fill", width = 1) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())  +
+  facet_grid(. ~ study, scales="free_x", space="free_x") +
+  labs(y = 'Relative Abundance', x = 'Sample', fill = 'Phylum')
 ggsave(here('figures','abundance_phylum.png'), width = 6, height = 4)
 ```
 
