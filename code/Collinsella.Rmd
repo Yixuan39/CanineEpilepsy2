@@ -16,6 +16,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # Set Up
 
 ```{r message=FALSE}
+set.seed(2024)
 library(tidyverse)
 library(here)
 library(phyloseq)
@@ -114,8 +115,15 @@ Does Drug usage associate on sex to the existence frequency of Collinsella?
 ```{r}
 otu.df %>% 
     filter(Epileptic.or.Control == 'Epileptic') %>% 
+    ggplot() +
+    geom_boxplot(aes(x = Pheno.Y.N, y = Abundance)) +
+    facet_wrap(~ASV, scale = 'free_y')
+
+
+otu.df %>% 
+    filter(Epileptic.or.Control == 'Epileptic') %>% 
     split(.$ASV) %>% 
-    lapply(function(df) chisq.test(xtabs(sign(Abundance) ~ Sex  + Pheno.Y.N, data = df)))
+    lapply(function(df) chisq.test(xtabs(sign(Abundance) ~ Pheno.Y.N, data = df)))
 ```
 
 # Negative Binomial Regression Model

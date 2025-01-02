@@ -13,10 +13,10 @@ output:
 
 ```{r message=FALSE}
 rm(list = ls())
+set.seed(2024)
 library(here)
 library(phyloseq)
 library(tidyverse)
-set.seed(2024)
 theme_set(theme_bw())
 ```
 

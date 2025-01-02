@@ -11,7 +11,7 @@
 
 <meta name="author" content="Yixuan Yang" />
 
-<meta name="date" content="2024-12-29" />
+<meta name="date" content="2025-01-01" />
 
 <title>Metadata Cleaning</title>
 
@@ -1481,12 +1481,13 @@ border-radius: 0px;
 
 <h1 class="title toc-ignore">Metadata Cleaning</h1>
 <h4 class="author">Yixuan Yang</h4>
-<h4 class="date">2024-12-29</h4>
+<h4 class="date">2025-01-01</h4>
 
 </div>
 
 
 <pre class="r"><code>rm(list = ls())
+set.seed(2024)
 library(tidyverse)
 library(readxl)
 library(here)
@@ -1555,6 +1556,8 @@ separate them into two columns</p>
 <p>Pheno.Y.N. indicates whether the dogs are exposed to phenobarbital or
 not. Here assign NA to No.</p>
 <pre class="r"><code>meta_data$Pheno.Y.N[is.na(meta_data$Pheno.Y.N)] &lt;- &#39;No&#39;</code></pre>
+<p>Set Epileptic.or.Control as factor</p>
+<pre class="r"><code>meta_data$Epileptic.or.Control &lt;- factor(meta_data$Epileptic.or.Control, levels = c(&#39;Control&#39;,&#39;Epileptic&#39;))</code></pre>
 </div>
 <div id="create-phyloseq-object" class="section level1">
 <h1>Create phyloseq object</h1>
@@ -1703,11 +1706,11 @@ depth.</p>
 ps.rarefied &lt;- rarefy_even_depth(ps, sample.size = 44590)
 ps.rarefied</code></pre>
 <pre><code>## phyloseq-class experiment-level object
-## otu_table()   OTU Table:         [ 2555 taxa and 100 samples ]
+## otu_table()   OTU Table:         [ 2548 taxa and 100 samples ]
 ## sample_data() Sample Data:       [ 100 samples by 28 sample variables ]
-## tax_table()   Taxonomy Table:    [ 2555 taxa by 7 taxonomic ranks ]
-## phy_tree()    Phylogenetic Tree: [ 2555 tips and 2554 internal nodes ]
-## refseq()      DNAStringSet:      [ 2555 reference sequences ]</code></pre>
+## tax_table()   Taxonomy Table:    [ 2548 taxa by 7 taxonomic ranks ]
+## phy_tree()    Phylogenetic Tree: [ 2548 tips and 2547 internal nodes ]
+## refseq()      DNAStringSet:      [ 2548 reference sequences ]</code></pre>
 <p>Two samples are lost after rarefying. To keep the consistency between
 the rarefied and non-rarefied data and the structure of the pairwise
 study design, we remove pairs from household 37 and 46.</p>
@@ -1727,11 +1730,11 @@ ps</code></pre>
 <pre class="r"><code>ps.rarefied &lt;- subset_samples(ps.rarefied, !(Household %in% house.rm))
 ps.rarefied</code></pre>
 <pre><code>## phyloseq-class experiment-level object
-## otu_table()   OTU Table:         [ 2555 taxa and 98 samples ]
+## otu_table()   OTU Table:         [ 2548 taxa and 98 samples ]
 ## sample_data() Sample Data:       [ 98 samples by 28 sample variables ]
-## tax_table()   Taxonomy Table:    [ 2555 taxa by 7 taxonomic ranks ]
-## phy_tree()    Phylogenetic Tree: [ 2555 tips and 2554 internal nodes ]
-## refseq()      DNAStringSet:      [ 2555 reference sequences ]</code></pre>
+## tax_table()   Taxonomy Table:    [ 2548 taxa by 7 taxonomic ranks ]
+## phy_tree()    Phylogenetic Tree: [ 2548 tips and 2547 internal nodes ]
+## refseq()      DNAStringSet:      [ 2548 reference sequences ]</code></pre>
 <p>check if data are paired by household</p>
 <pre class="r"><code>if (!identical(sample_data(ps)$Household[seq(1,98,2)], sample_data(ps)$Household[seq(1,98,2)+1])) stop(&#39;data is not paired&#39;)
 if (!identical(sample_data(ps.rarefied)$Household[seq(1,98,2)], sample_data(ps.rarefied)$Household[seq(1,98,2)+1])) stop(&#39;data is not paired&#39;)</code></pre>
@@ -1747,14 +1750,14 @@ saveRDS(ps.rarefied, file = here(&#39;data&#39;,&#39;following_study&#39;,&#39;p
 <pre><code>## ─ Session info ───────────────────────────────────────────────────────────────
 ##  setting  value
 ##  version  R version 4.4.1 (2024-06-14)
-##  os       macOS 15.1.1
+##  os       macOS 15.2
 ##  system   aarch64, darwin20
 ##  ui       X11
 ##  language (EN)
 ##  collate  en_US.UTF-8
 ##  ctype    en_US.UTF-8
 ##  tz       America/New_York
-##  date     2024-12-29
+##  date     2025-01-01
 ##  pandoc   3.5 @ /Users/yixuanyang/miniforge3/bin/ (via rmarkdown)
 ## 
 ## ─ Packages ───────────────────────────────────────────────────────────────────

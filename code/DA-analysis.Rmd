@@ -19,7 +19,6 @@ library(phyloseq)
 library(here)
 library(gt)
 library(GGally)
-library(patchwork)
 library(ggcorrplot)
 theme_set(theme_bw())
 
@@ -106,28 +105,36 @@ ps.rare
 
 ### pairwise T-test
 
-```{r}
-clr.data <- aldex.clr(t(otu_table(ps)), sample_data(ps)$Epileptic.or.Control, mc.samples=128, denom="all")
-aldex.t.test <- data.frame(aldex.ttest(clr.data, paired.test = TRUE), aldex.effect(clr.data, paired.test = TRUE)) %>% 
-    rownames_to_column('taxon') %>% 
-    dplyr::select(taxon,diff.btw, we.ep) 
+```{r message=FALSE}
+clr.data <- aldex.clr(t(otu_table(ps)), as.character(sample_data(ps)$Epileptic.or.Control), mc.samples=128, denom="all")
 
-colnames(aldex.t.test)[2:3] <- c('LFC', 'p.value')
+aldex.t.test.p <- aldex.ttest(clr.data, paired.test = TRUE)
+aldex.t.test.effect <- aldex.effect(clr.data, paired.test = TRUE, useMC = TRUE, verbose = FALSE)
+
+if (!identical(rownames(aldex.t.test.p), rownames(aldex.t.test.effect))) stop('taxa names are not matched')
+aldex.t.test <- data.frame(aldex.t.test.p, aldex.t.test.effect) %>% 
+  rownames_to_column('taxon') %>%
+  mutate(LFC = rab.win.Epileptic - rab.win.Control) %>% 
+  mutate(p.value = we.ep) %>%
+  dplyr::select(taxon, LFC, p.value)
     
 aldex.t.test %>% arrange(str_rank(taxon, numeric = TRUE)) %>% head()
 ```
 
 ### GLM test
 
-$$ASV_i \sim Epileptic.or.Control + Household$$
-
-```{r}
+```{r message=FALSE}
 model <- model.matrix(~ Epileptic.or.Control + Household, data.frame(sample_data(ps)))
 clr.data <- aldex.clr(t(otu_table(ps)), model, mc.samples=128, denom="all")
-aldex.glm.test <- data.frame(aldex.glm(clr.data, model), aldex.glm.effect(clr.data, verbose = FALSE)) %>% 
-    rownames_to_column('taxon') %>% 
-    dplyr::select(taxon, `Epileptic.or.ControlEpileptic.diff.btw`, `Epileptic.or.ControlEpileptic.pval`)
-colnames(aldex.glm.test)[2:3] <- c('LFC', 'p.value')
+
+aldex.glm.test.p <- aldex.glm(clr.data, model)
+aldex.glm.test.effect <- aldex.glm.effect(clr.data, verbose = FALSE, useMC = TRUE)$Epileptic.or.ControlEpileptic
+if (!identical(rownames(aldex.glm.test.p), rownames(aldex.glm.test.effect))) stop('taxa names are not matched')
+
+aldex.glm.test <- data.frame(p.value = aldex.glm.test.p$`Epileptic.or.ControlEpileptic:pval`, aldex.glm.test.effect) %>% 
+    rownames_to_column('taxon') %>%
+    mutate(LFC = rab.win.1 - rab.win.0) %>% # 0 is control, 1 is epileptic, set is `data-cleaning.Rmd`
+    dplyr::select(taxon, LFC, p.value)
 
 aldex.glm.test %>% arrange(str_rank(taxon, numeric = TRUE)) %>% head()
 ```
@@ -137,11 +144,13 @@ aldex.glm.test %>% arrange(str_rank(taxon, numeric = TRUE)) %>% head()
 ```{r message=FALSE}
 ancombc.test <- ancombc(data = ps,
                         formula = 'Epileptic.or.Control + Household',
+                        taxa_are_rows = FALSE,
                         prv_cut = 0,
                         n_cl = max.cores)
 
 ancombc.test <- data.frame(taxon = ancombc.test$res$lfc$taxon,
-                           LFC = ancombc.test$res$lfc$Epileptic.or.ControlEpileptic,
+                           # convert logfold change to log2fold change
+                           LFC = log2(exp(ancombc.test$res$lfc$Epileptic.or.ControlEpileptic)),
                            p.value = ancombc.test$res$p_val$Epileptic.or.ControlEpileptic)
 
 ancombc.test %>% arrange(str_rank(taxon, numeric = TRUE)) %>% head
@@ -149,13 +158,14 @@ ancombc.test %>% arrange(str_rank(taxon, numeric = TRUE)) %>% head
 
 ## corncob
 
-```{r}
+```{r message=FALSE}
 corncob.test <- differentialTest(formula= ~ Epileptic.or.Control + Household,
                                  phi.formula = ~ 1,
                                  formula_null = ~ Household,
                                  phi.formula_null = ~ 1,
                                  test = 'LRT',
-                                 fdr_cutoff = 1,
+                                 # filter_discriminant = FALSE, 
+                                 # fdr_cutoff = 1,
                                  data = ps,
                                  taxa_are_rows = FALSE)
 
@@ -236,37 +246,36 @@ test.results <- list("ALDEx2 t test" = aldex.t.test,
 
 tax <- tax_table(ps) %>% 
     as.data.frame() %>% 
-    dplyr::select(Genus) %>% 
+    dplyr::select(Phylum, Genus) %>% 
     rownames_to_column('taxon')
 
 p.value.tb <- test.results %>% 
     dplyr::select(taxon, method, p.value) %>% 
     pivot_wider(names_from = method, values_from = p.value) %>%
     rowwise() %>%
-    mutate(SignificantCount = sum(c_across(-taxon) < alpha)) %>% 
-    arrange(desc(SignificantCount))
+    mutate(SignificantCount = sum(c_across(-taxon) < alpha))
 
 top.p <- p.value.tb %>%
+    left_join(tax,., by = 'taxon') %>% 
+    arrange(desc(SignificantCount)) %>%
     dplyr::select(-SignificantCount)
 
 tb <- top.p %>% 
-    # left_join(tax, by = 'taxon') %>% 
     head(10) %>% 
     gt() %>% 
     fmt_number(decimals = 4) %>% 
-    data_color(columns = colnames(p.value.tb)[2:7],
+    data_color(columns = colnames(top.p)[4:9],
                colors = scales::col_bin(palette = c(scales::hue_pal()(1), "transparent"),
                                         bins = c(-Inf, 0.05, Inf)))
 tb
-# gtsave(tb, file = here('figures','top10_p.png'))
+writexl::write_xlsx(top.p, here('data', 'following_study', 'top10_pvalue.xlsx'))
 ```
 
 Effect size of top 10 ASVs for each method.
 
 ```{r}
 test.results$taxon <- factor(test.results$taxon,
-                             levels = str_sort(unique(test.results$taxon),
-                                               numeric = TRUE))
+                             levels = top.p$taxon)
 effect.plot <- test.results %>% 
     filter(method != 'corncob') %>% 
     filter(taxon %in% head(top.p$taxon, 10)) %>% 
@@ -281,17 +290,20 @@ correlation of p-value for each method.
 
 ```{r}
 top.p %>%  
+    dplyr::select(-c(Phylum, Genus)) %>%
     column_to_rownames('taxon') %>% 
     ggpairs(progress = FALSE)
 
 cor.plot <- top.p %>%  
-    column_to_rownames('taxon') %>% 
-    cor() %>% 
+    dplyr::select(-c(Phylum, Genus)) %>%
+    column_to_rownames('taxon') %>%
+    cor() %>%
     ggcorrplot(lab = TRUE, type = 'lower', show.legend = FALSE, tl.cex = 10)
 cor.plot
 ```
 
 ```{r include=FALSE}
+library(patchwork)
 cor.plot + effect.plot + plot_annotation(tag_levels = 'a')
 ```
 
