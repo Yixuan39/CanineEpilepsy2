@@ -1,0 +1,238 @@
+---
+title: "Epilepsy Prediction"
+author: "Yixuan Yang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set Up
+
+```{r message=FALSE}
+rm(list = ls())
+set.seed(2024)
+library(tidyverse)
+library(tidymodels)
+library(phyloseq)
+library(here)
+library(vip)
+library(future)
+plan(multisession)
+# load data
+ps.rare <- readRDS(here('data','following_study','ps_rarefied.rds')) %>%
+    subset_samples(!is.na(Breed.Group..1.)) %>% 
+    filter_taxa(function(x) {
+        prevalence <- sum(x > 0) / length(x)
+        prevalence > 0.2
+        }, prune = TRUE)
+sam <- sample_data(ps.rare) %>% data.frame() 
+otu <- otu_table(ps.rare) %>% data.frame() 
+```
+
+Here we are using Age, Sex and Breed Grouping from the metadata and the microbiome abundance of the rarefied dataset to predict the Epileptic status of the dogs. Only ASVs with higher than 20% prevalence are included.
+
+Here we first encode the breed grouping manually and then preprocess the data for the model.
+
+```{r}
+# encode Breed Grouping
+breed.group <- sam %>% dplyr::select(Breed.Group..1., Breed.Group..2., Breed.Group..3.)
+breed.columns <- breed.group %>% unlist() %>% unique() %>% na.exclude()
+breed.encode <- apply(breed.group, 1, function(x) {
+  sapply(breed.columns, function(y) if_else(y %in% x, 1, 0))
+}) %>% t() %>% as.data.frame()
+head(breed.encode)
+ps.data <- sam %>% 
+  dplyr::select(Age..months., Epileptic.or.Control, Sex) %>% 
+  cbind(breed.encode, otu)
+saveRDS(ps.data, here('data','following_study','ml_data.rds'))
+```
+
+# Data Preprocess
+
+```{r}
+# Split data
+data_split <- initial_split(ps.data, prop = 0.7, strata = Epileptic.or.Control)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+
+# Recipe
+Recipe <- recipe(Epileptic.or.Control ~ ., data = train_data) %>%
+  step_zv(all_predictors()) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.9) %>%
+  step_dummy(Sex)
+```
+
+# Logistic Regression
+
+```{r}
+# Model 
+log.model <- logistic_reg(penalty = tune(), mixture = tune()) %>%
+  set_mode('classification') %>% 
+  set_engine("glmnet")
+
+# Workflow
+log.workflow <- workflow() %>%
+  add_model(log.model) %>%
+  add_recipe(Recipe)
+
+# Grid
+log.grid <- grid_random(penalty(), mixture(), size = 1000)
+
+# Hyperparameter tuning
+log.tunning <- log.workflow %>%
+  tune_grid(
+    resamples = bootstraps(train_data, times = 1000),
+    grid = log.grid,
+    metrics = metric_set(roc_auc, pr_auc, accuracy),
+    control = control_grid(save_pred = TRUE)
+  )
+
+best.log <- log.tunning %>% select_best(metric = "accuracy")
+
+# Finalize workflow
+final.log.workflow <- finalize_workflow(log.workflow, best.log)
+
+log.fit <- final.log.workflow %>%
+  last_fit(split = data_split)
+
+log.fit %>% collect_metrics()
+```
+
+# Random Forest
+
+```{r}
+# Random Forest model
+rf.model <- rand_forest(mode = "classification",
+                        trees = tune(),
+                        min_n = tune(),
+                        mtry = tune()) %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+
+
+# Workflow
+rf.workflow <- workflow() %>%
+  add_model(rf.model) %>%
+  add_recipe(Recipe)
+
+rf.boot <- bootstraps(train_data, times = 1000)
+
+# Tuning grid
+rf.grid <- grid_random(
+  trees(),min_n(),
+  finalize(mtry(), rf.boot),
+  size = 1000
+)
+
+# Hyperparameter tuning
+rf.tunning <- rf.workflow %>%
+  tune_grid(
+    resamples = rf.boot,
+    grid = rf.grid,
+    metrics = metric_set(roc_auc, pr_auc, accuracy),
+    control = control_grid(save_pred = TRUE)
+  )
+
+# Select best hyperparameters
+best.tree <- rf.tunning %>% select_best(metric = "accuracy")
+
+# Finalize workflow
+final.rf.workflow <- finalize_workflow(rf.workflow, best.tree)
+
+# Fit final model
+rf.fit <- final.rf.workflow %>%
+  last_fit(split = data_split)
+
+rf.fit %>%
+  collect_metrics()
+
+tree <- extract_workflow(rf.fit)
+
+tree %>% 
+  extract_fit_parsnip() %>% 
+  vip()
+```
+
+# SVM
+
+```{r}
+# Random Forest model
+svm.model <- svm_linear(cost = tune()) %>% 
+  set_engine("kernlab") %>%
+  set_mode("classification")
+
+
+# Workflow
+svm.workflow <- workflow() %>%
+  add_model(svm.model) %>%
+  add_recipe(Recipe)
+
+# Tuning grid
+svm.grid <- grid_random(cost(), size = 1000)
+
+# Hyperparameter tuning
+svm.tunning <- svm.workflow %>%
+  tune_grid(
+    resamples = bootstraps(train_data, times = 1000),
+    grid = svm.grid,
+    metrics = metric_set(roc_auc, pr_auc, accuracy),
+    control = control_grid(save_pred = TRUE)
+  )
+
+# Select best hyperparameters
+best.svm <- svm.tunning %>% select_best(metric = "accuracy")
+
+# Finalize workflow
+final.svm.workflow <- finalize_workflow(svm.workflow, best.svm)
+
+# Fit final model
+svm.fit <- final.svm.workflow %>%
+  last_fit(split = data_split)
+
+svm.fit %>%
+  collect_metrics()
+```
+
+```{r include=FALSE}
+# Random Forest model
+mlp.model <- mlp(hidden_units = tune(),
+                penalty = tune(),
+                epochs = tune()) %>% 
+  set_engine("nnet") %>%
+  set_mode("classification") %>% 
+  set_args(MaxNWts = 100000)
+
+
+# Workflow
+mlp.workflow <- workflow() %>%
+  add_model(mlp.model) %>%
+  add_recipe(Recipe)
+
+# Tuning grid
+mlp.grid <- grid_random(hidden_units(), penalty(), epochs(), size = 1000)
+
+# Hyperparameter tuning
+mlp.tunning <- mlp.workflow %>%
+  tune_grid(
+    resamples = bootstraps(train_data, times = 1000),
+    grid = mlp.grid,
+    metrics = metric_set(roc_auc, pr_auc, accuracy),
+    control = control_grid(save_pred = TRUE)
+  )
+
+# Select best hyperparameters
+best.mlp <- mlp.tunning %>% select_best(metric = "accuracy")
+
+# Finalize workflow
+final.mlp.workflow <- finalize_workflow(mlp.workflow, best.mlp)
+
+# Fit final model
+mlp.fit <- final.mlp.workflow %>%
+  last_fit(split = data_split)
+
+mlp.fit %>%
+  collect_metrics()
+```

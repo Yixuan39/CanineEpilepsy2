@@ -1,0 +1,279 @@
+---
+title: "Alpha and Beta Diversity Analysis"
+author: "Yixuan Yang"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set Up
+
+```{r message=FALSE}
+rm(list = ls())
+set.seed(2024)
+library(tidyverse)
+library(here)
+library(phyloseq)
+library(vegan)
+library(rstatix)
+theme_set(theme_bw())
+options(digits=4)
+max.core <- parallel::detectCores()
+
+ps.rare <- readRDS(here('data','following_study','ps_rarefied.rds')) 
+sample_data(ps.rare)$Shannon <- estimate_richness(ps.rare)$Shannon
+# transform data into proportion
+ps.rare.prop <- ps.rare %>% transform_sample_counts(function(x) x/sum(x))
+
+sam <- data.frame(sample_data(ps.rare))
+```
+
+# Functions
+
+`plot_ord` draws ordination plot for different factors using `plot_ordination` function in `phyloseq` package.
+
+`permanova` performs permutational multivariate analysis of variance (PERMANOVA) based on `adonis2` function in `vegan` package.
+
+`permdisp` performs permutational analysis of multivariate dispersions (PERMDISP) based on `betadisper` function in `vegan` package.
+
+```{r}
+plot_ord <- function(data, factor, method, distance){
+    data.ord <- ordinate(data, method = method, distance = distance)
+    p <- plot_ordination(data, data.ord, color = factor)
+    p <- p + stat_ellipse(type = "t",geom = "polygon",alpha = 0)
+    p <- p + ggtitle(str_c(factor,method,distance, sep = ' - '))
+    print(p)
+}
+
+permanova <- function(data, formula, method, permutations=1e4, strata = NULL, core = max.core){
+    message('PERMANOVA Model: ', method, '~', formula, '; Strata: ', ifelse(is_null(strata), 'None', as.character(strata)))
+    dist.matrix <- phyloseq::distance(data, method=method)
+    df <- data.frame(sample_data(data))
+    model <- as.formula(paste0('dist.matrix~', formula))
+    if (!is_null(strata)) {strata <- df[,strata]}
+    result <- adonis2(model,
+                      data = df,
+                      permutations=permutations,
+                      strata = strata,
+                      parallel = core,
+                      by = 'term',
+                      na.action = na.omit)
+    return(result)
+}
+permdisp <- function(data, group, method, permutations=1e4, pairwise = FALSE, core = max.core){
+    message('PERMDISP Model: ', method, '~', group)
+    dist.matrix <- phyloseq::distance(data, method=method)
+    df <- data.frame(sample_data(data))
+    beta.disp <- betadisper(dist.matrix, group = df[,group])
+    result <- permutest(beta.disp, permutations = permutations, pairwise = pairwise, type = 'centroid')
+    return(result)
+}
+```
+
+# Start
+
+In this section, we want to estimate the effect of different factors on the microbial diversity. The factors we are focusing on are `Household`, `Epileptic.or.Control`, `Breed.Group..1.`, `Pheno.Y.N`, `Sex`, and `Age..months.`. We compare the species richness (Shannon index) among different factors using ANOVA, and compare the centroid of dissimilarity of microbial community between different groups using PERMANOVA using the Bray-Curtis and weighted Unifrac distance, and visualized using multi-dimensional scaling. PERMDISP was used to test the homogeneity of multivariate dispersions among groups.
+
+# Household Effect
+
+## Alpha Diversity
+
+```{r}
+ggplot(sam,aes(x = as.numeric(Household), y = Shannon, group = Household)) +
+    geom_point() + geom_line() + xlab('Household')
+anova_test(Shannon~Household, data = sam, type = 1)
+```
+
+Here we see the Shannon diversity index is significantly different among households.
+
+## Beta Diversity
+
+### Bray-Curtis distance
+
+```{r}
+permanova(ps.rare.prop, 'Household', 'bray')
+```
+
+### Weighted-Unifrac distance
+
+```{r}
+permanova(ps.rare.prop, 'Household', 'wunifrac')
+```
+
+# Epileptic Effect
+
+## Alpha Diversity
+
+```{r}
+ggplot(sam, aes(x = Epileptic.or.Control, y = Shannon)) + 
+    geom_boxplot() + geom_jitter(height = 0, width = 0.25)
+anova_test(Shannon~Household+Epileptic.or.Control, data = sam, type = 1)
+```
+
+## Beta Diversity
+
+### Bray-Curtis distance
+
+```{r}
+plot_ord(ps.rare.prop, 'Epileptic.or.Control','MDS','bray')
+plot_ord(ps.rare.prop, 'Epileptic.or.Control','NMDS','bray')
+permanova(ps.rare.prop, 'Epileptic.or.Control', 'bray', strata = 'Household')
+permdisp(ps.rare.prop, 'Epileptic.or.Control', 'bray')
+```
+
+### Weighted-Unifrac distance
+
+```{r}
+plot_ord(ps.rare.prop, 'Epileptic.or.Control','MDS','wunifrac')
+plot_ord(ps.rare.prop, 'Epileptic.or.Control','NMDS','wunifrac')
+permanova(ps.rare.prop, 'Epileptic.or.Control', 'wunifrac', strata = 'Household')
+permdisp(ps.rare.prop, 'Epileptic.or.Control', 'wunifrac')
+```
+
+
+# Breed Effect
+
+## Alpha Diversity
+
+```{r}
+sam.breed <- sam %>%
+  filter(is.na(Breed.Group..1.) == FALSE) %>% 
+  filter(is.na(Breed.Group..2.) == TRUE, is.na(Breed.Group..3.) == TRUE)
+nrow(sam.breed)
+  
+ggplot(sam.breed) +
+    geom_point(aes(x = Breed.Group..1., y = Shannon, colour = Breed.Group..1.)) +
+    facet_wrap(~Epileptic.or.Control) + 
+    theme(axis.text.x = element_blank(), axis.ticks.x.bottom = element_blank())
+
+anova_test(Shannon~Household + Breed.Group..1., data = sam.breed, type = 1)
+```
+
+## Beta Diversity
+
+### Bray-Curtis distance
+
+```{r}
+plot_ord(ps.rare.prop, 'Breed.Group..1.','MDS','bray')
+plot_ord(ps.rare.prop, 'Breed.Group..1.','NMDS','bray')
+permanova(ps.rare.prop, 'Household + Breed.Group..1.', 'bray')
+permdisp(ps.rare.prop, 'Breed.Group..1.', 'bray')
+```
+
+### Weighted-Unifrac distance
+
+```{r}
+plot_ord(ps.rare.prop, 'Breed.Group..1.','MDS','wunifrac')
+plot_ord(ps.rare.prop, 'Breed.Group..1.','NMDS','wunifrac')
+permanova(ps.rare.prop, 'Household + Breed.Group..1.', 'wunifrac')
+permdisp(ps.rare.prop, 'Breed.Group..1.', 'wunifrac')
+```
+
+# Drug Effect
+
+## Alpha Diversity
+
+```{r}
+sam.drug <- sam %>% filter(Epileptic.or.Control == 'Epileptic')
+ggplot(sam.drug, aes(x = Pheno.Y.N, y = Shannon)) + 
+    geom_boxplot() + geom_jitter(height = 0, width = 0.25)
+anova_test(Shannon~Pheno.Y.N, data = sam.drug, type = 1)
+```
+
+## Beta Diversity
+
+### Bray-Curtis distance
+
+```{r}
+ps.drug <- ps.rare.prop %>% subset_samples(Epileptic.or.Control == 'Epileptic')
+plot_ord(ps.drug, 'Pheno.Y.N','MDS','bray')
+plot_ord(ps.drug, 'Pheno.Y.N','NMDS','bray')
+permanova(ps.drug, 'Pheno.Y.N', 'bray')
+permdisp(ps.drug, 'Pheno.Y.N', 'bray')
+```
+
+### Weighted-Unifrac distance
+
+```{r}
+plot_ord(ps.drug, 'Pheno.Y.N','MDS','wunifrac')
+plot_ord(ps.drug, 'Pheno.Y.N','NMDS','wunifrac')
+permanova(ps.drug, 'Pheno.Y.N', 'wunifrac')
+permdisp(ps.drug, 'Pheno.Y.N', 'wunifrac')
+```
+
+
+# Sex Effect
+
+```{r}
+prop.test(xtabs(~Household+Sex, data = sam))
+```
+
+## Alpha Diversity
+
+```{r}
+ggplot(sam, aes(x = Sex, y = Shannon)) + 
+    geom_boxplot() + geom_jitter(height = 0, width = 0.25)
+anova_test(Shannon~Household+Sex, data = sam, type = 1)
+```
+
+## Beta Diversity
+
+### Bray-Curtis distance
+
+```{r}
+plot_ord(ps.rare.prop, 'Sex','MDS','bray')
+plot_ord(ps.rare.prop, 'Sex','NMDS','bray')
+permanova(ps.rare.prop, 'Household+Sex', 'bray')
+permdisp(ps.rare.prop, 'Sex', 'bray')
+```
+
+### Weighted-Unifrac distance
+
+```{r}
+plot_ord(ps.rare.prop, 'Sex','MDS','wunifrac')
+plot_ord(ps.rare.prop, 'Sex','NMDS','wunifrac')
+permanova(ps.rare.prop, 'Household+Sex', 'wunifrac')
+permdisp(ps.rare.prop, 'Sex', 'wunifrac')
+```
+
+# Age Effect
+
+## Alpha Diversity
+
+```{r}
+sam[which(is.na(sam$Age..months.)),'Household'] 
+# remove households that have dog with unspecific age
+sam.Age <- sam %>% filter(!(Household %in% c('9', '24')))
+ggplot(sam.Age,) +
+    geom_line(aes(x = as.numeric(Household), y = Age..months., group = Household)) + 
+    geom_point(aes(x = as.numeric(Household), y = Age..months., group = Household, colour = Epileptic.or.Control)) +
+    xlab('Household') + ylab('Age in month')
+
+anova_test(Shannon~Household+Age..months., data = sam.Age, type = 1)
+```
+
+## Beta Diversity
+
+### Bray-Curtis distance
+
+```{r}
+ps.age <- ps.rare.prop %>% subset_samples(!(Household %in% c('9', '24')))
+permanova(ps.age, 'Age..months.', 'bray', strata = 'Household')
+```
+
+### Weighted-Unifrac distance
+
+```{r}
+permanova(ps.age, 'Age..months.', 'wunifrac')
+```
+
+```{r}
+sessioninfo::session_info()
+```

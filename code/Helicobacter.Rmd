@@ -1,0 +1,124 @@
+---
+title: "Analyze Collinsella"
+author: "Yixuan Yang"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set Up
+
+```{r message=FALSE}
+library(tidyverse)
+library(here)
+library(phyloseq)
+theme_set(theme_bw())
+
+ps.helicobacter <- readRDS(here('data','following_study','ps_rarefied.rds')) %>%
+    subset_taxa(Genus == 'Helicobacter') 
+taxa_names(ps.genus) <- 'Genus'
+
+# add genus level collinsella count to otu table
+otu.df <- otu_table(ps.helicobacter) %>% 
+    cbind(Genus = otu_table(ps.genus)) %>%
+    cbind(data.frame(sample_data(ps.helicobacter))) %>% 
+    pivot_longer(c(starts_with('ASV'), 'Genus'), names_to = 'ASV', values_to = 'Abundance')
+
+
+lfc <- otu.df %>%
+    group_by(Household, ASV) %>%
+    summarise(LFC = log2(Abundance[Epileptic.or.Control == "Epileptic"] + 1) -
+                  log2(Abundance[Epileptic.or.Control == "Control"] + 1),
+              .groups = 'drop')
+```
+
+# Start
+
+We have found that `Collinsella` is the top candidate that influence dog's microbiome. Here we investigate its existence.
+
+```{r}
+ggplot(lfc) +
+    geom_bar(aes(x = as.numeric(Household), y = LFC, fill = (LFC > 0)), stat = 'identity') +
+    facet_wrap(~ASV, scales = 'free_y') +
+    labs(x = 'Household', y = 'log 2 fold change', fill = 'LFC > 0')
+```
+
+Are there always more Collinsella ASVs in Epileptic group than control group?
+
+```{r}
+library(rstatix)
+otu.df %>% 
+    arrange(Household, Epileptic.or.Control) %>%
+    group_by(ASV) %>%
+    pairwise_sign_test(Abundance ~ Epileptic.or.Control, ref.group = 'Epileptic', alternative = 'greater')
+```
+
+
+## Distribution of Collinsella
+
+```{r message=FALSE}
+helicobacter.prop <- readRDS(here('data','following_study','ps_rarefied.rds')) %>%
+    transform_sample_counts(function(x) x / sum(x)) %>% 
+    subset_taxa(Genus == 'Helicobacter') %>% 
+    psmelt()
+helicobacter.prop$OTU <- factor(helicobacter.prop$OTU, levels = str_sort(unique(helicobacter.prop$OTU), numeric = TRUE))
+ggplot(helicobacter.prop) +
+    geom_boxplot(aes(x = OTU, y = Abundance)) +
+    labs(y = 'Proportion', color = 'Epileptic or Control') +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+# Contingency Tables
+
+Existence frequency of Collinsella across Epi v.s. Control groups
+
+```{r}
+ftable(xtabs(sign(Abundance) ~ Epileptic.or.Control + ASV, data = otu.df))
+```
+
+Epileptic cross sex table for each Collinsella ASVs
+
+```{r}
+ftable(xtabs(sign(Abundance) ~ Sex  + Epileptic.or.Control + ASV, data = otu.df))
+```
+
+Does Epileptic or Control group associate with sex for Collinsella ASV?
+
+```{r}
+otu.df %>% 
+    split(.$ASV) %>% 
+    lapply(function(df) summary(xtabs(sign(Abundance) ~ Sex  + Epileptic.or.Control, data = df)))
+```
+
+```{r}
+ftable(xtabs(sign(Abundance) ~ Sex  + Pheno.Y.N + ASV, data = otu.df))
+```
+
+Does Drug usage associate on sex to the existence frequency of Collinsella?
+
+```{r}
+otu.df %>% 
+    filter(Epileptic.or.Control == 'Epileptic') %>% 
+    split(.$ASV) %>% 
+    lapply(function(df) chisq.test(xtabs(sign(Abundance) ~ Sex  + Pheno.Y.N, data = df)))
+```
+
+# Negative Binomial Regression Model
+
+```{r}
+otu.df %>%
+    split(.$ASV) %>%
+    lapply(function(df) MASS::glm.nb((Abundance + 1) ~ Age..months., data = df) %>% summary)
+```
+
+```{r}
+sessioninfo::session_info()
+```

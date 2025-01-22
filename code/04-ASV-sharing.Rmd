@@ -1,0 +1,219 @@
+---
+title: "ASV Sharing Between Dogs"
+author: "Yixuan Yang"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set Up
+
+```{r message=FALSE}
+rm(list = ls())
+set.seed(2024)
+library(here)
+library(phyloseq)
+library(tidyverse)
+library(gt)
+theme_set(theme_bw())
+
+ps.rarefied <- readRDS(here('data','following_study','ps_rarefied.rds'))
+ps.rarefied
+sam <- data.frame(sample_data(ps.rarefied)) %>% rownames_to_column('Sample')
+pair1 <- sam %>% filter(Epileptic.or.Control == 'Epileptic')
+pair2 <- sam %>% filter(Epileptic.or.Control == 'Control')
+# double-check if data are paired
+if (!identical(pair1$Household, pair2$Household)) stop('data is not paired')
+paired.data <- list(pair1, pair2)
+```
+
+# ASV Sharing between Dogs
+
+In this section, we are trying to compare the ASV similarity between dogs from the same and different households. To do this, for each epileptic dog, we randomly select a control dog from a different household. We then calculate the Jaccard similarity between the epileptic dog and the two control dogs. However, before doing that we need to balance the breed effect since most of the households have dogs with the same breed. 
+
+## Breed Control
+
+```{r}
+sapply(1:nrow(pair1), function(i) paired.data[[1]]$Predominant.Breed[i] == paired.data[[2]]$Predominant.Breed[i]) %>% sum
+```
+
+33 of 49 households have dogs with the same predominant breed. We want to control the breed effect when we compare the ASV sharing between epileptic and control dogs. 
+
+```{r}
+select.dog <- function(pair1, pair2) {
+    diff.pair <- data.frame()
+    for (i in 1:nrow(pair1)) {
+        # selection pool is pair2 that are not from the same household but with the same predominate breed
+        sub.data <- pair2 %>% filter(Household != pair1[i,'Household'], Predominant.Breed == pair1[i,'Predominant.Breed'])
+        # if none of the dogs in pair2 have the same breed as the dog in pair1, then just select from another household.
+        if (nrow(sub.data) == 0) {sub.data <- pair2 %>% filter(Household != pair1[i,'Household'])}
+        selected <- sub.data %>% sample_n(1)
+        diff.pair <- rbind(diff.pair, selected)
+    }
+    return(diff.pair)
+}
+
+# one epileptic pair, one control pair, one different pair
+paired.data[[3]] <- select.dog(pair1, pair2)
+
+sapply(1:nrow(pair1), function(i) paired.data[[1]]$Predominant.Breed[i] == paired.data[[3]]$Predominant.Breed[i]) %>% sum
+```
+
+Here, we can see with replacement, if we randomly select a dog from the control group and forcing the breed to be the same if possible, the pair with the same breed is at most 31 out of 49. Some of the households have dogs in same breed, but that breed has never appear in other households.
+
+```{r}
+unique.breed.household <- sapply(1:nrow(pair1), function(i) {
+    # if breed in household is the same
+    if (paired.data[[1]]$Predominant.Breed[i] == paired.data[[2]]$Predominant.Breed[i]) {
+        # if the breed is not in the other households
+        if(!(paired.data[[1]]$Predominant.Breed[i] %in% paired.data[[2]]$Predominant.Breed[-i])) {
+            return(pair1[i,'Household'])
+            }
+        }
+    }) %>% unlist 
+unique.breed.household
+```
+
+By dropping two households (9 and 30), we can make sure that the breed effect is balanced.
+
+```{r}
+droped.household <- sample(unique.breed.household, 2); droped.household
+sub.sam <- sam %>% filter(!(Household %in% droped.household))
+pair1 <- sub.sam %>% filter(Epileptic.or.Control == 'Epileptic')
+pair2 <- sub.sam %>% filter(Epileptic.or.Control == 'Control')
+# double-check if data are paired
+if (!identical(pair1$Household, pair2$Household)) stop('data is not paired')
+pair2.diff <- select.dog(pair1, pair2)
+# one epileptic pair, one control pair, one different pair
+paired.data <- list(pair1, pair2, pair2.diff)
+
+sapply(1:nrow(pair1),function(i) paired.data[[1]]$Predominant.Breed[i] == paired.data[[2]]$Predominant.Breed[i]) %>% sum
+sapply(1:nrow(pair1),function(i) paired.data[[1]]$Predominant.Breed[i] == paired.data[[3]]$Predominant.Breed[i]) %>% sum
+```
+
+Now, we can calculate the Jaccard similarity between the epileptic dog and the two control dogs.
+
+```{r}
+get.similarity <- function(ps, paired.data, method) {
+    dissimilarities <- if(method == 'jaccard') {
+        phyloseq::distance(ps, method = method, binary = TRUE)
+    } else {
+        phyloseq::distance(ps, method = method)
+    }
+    dist <-  as.matrix(1 - dissimilarities)
+    same.household.similarity <- sapply(1:nrow(paired.data[[1]]), function(i) {dist[paired.data[[1]][i,'Sample'], paired.data[[2]][i,'Sample']]})
+    diff.household.similarity <- sapply(1:nrow(paired.data[[1]]), function(i) {dist[paired.data[[1]][i,'Sample'], paired.data[[3]][i,'Sample']]})
+    data.frame(pair1, method, same.household.similarity, diff.household.similarity)
+}
+
+household.similarity <- map_dfr(c('jaccard', 'bray', 'wunifrac'), function(method) get.similarity(ps.rarefied, paired.data, method))
+```
+
+Visualize the similarity between dogs from same/different households. Here we see most of the dogs from the same household have higher similarity than dogs from different households.
+
+```{r}
+household.similarity$method <- factor(household.similarity$method, levels = c('jaccard', 'bray', 'wunifrac'))
+ggplot(household.similarity) +
+    geom_point(aes(x = diff.household.similarity, y = same.household.similarity)) +
+    geom_abline(intercept = 0, slope = 1, color = 'blue') +
+    facet_wrap(~method) +
+    labs(x = 'Similarity Between Different Household', y = 'Similarity Between Same Household')
+
+household.similarity %>% 
+  pivot_longer(c('same.household.similarity', 'diff.household.similarity'), names_to = 'type', values_to = 'similarity') %>%
+  ggplot() +
+      geom_boxplot(aes(x = type, y = similarity)) +
+      facet_wrap(~method, scale = 'free_y') +
+      labs(x = 'Similarity Between Different Household', y = 'Similarity Between Same Household')
+```
+
+```{r}
+household.similarity %>% 
+    filter(method == 'jaccard') %>%
+    ggplot() +
+    # geom_text(aes(x = diff.household.similarity, y = same.household.similarity, label = Household), check_overlap = TRUE) +
+    geom_point(aes(x = diff.household.similarity, y = same.household.similarity)) +
+    geom_abline(intercept = 0, slope = 1, color = "blue", size = 1) +
+    # facet_wrap(~method) +
+    tune::coord_obs_pred() +
+    labs(x = 'Similarity Between Different Household', y = 'Similarity Between Same Household')
+```
+
+
+Pairwise t test
+
+```{r}
+household.similarity %>% 
+    split(.$method) %>%
+    lapply(function(x) t.test(x$same.household.similarity,
+                              x$diff.household.similarity, 
+                              paired = TRUE,
+                              alternative = 'greater'))
+  
+```
+
+# ASV Sharing Rate
+
+Another way to investigate the household effect. Suppose there's no household effect, the expected probability that an ASV presents in both dog (share rate) of a household is the square of the proportion of an ASV present across all dogs (prevalence). Here we see the share rate is always higher than the square of the prevalence.
+
+```{r}
+ASV.present <- ps.rarefied %>%
+    transform_sample_counts(sign) %>% 
+    psmelt() 
+
+shared.rate <- ASV.present %>% 
+    group_by(Household, OTU) %>% 
+    summarise(shared = sum(Abundance) == 2) %>% 
+    group_by(OTU) %>% 
+    summarise(share.rate = sum(shared)/49) %>% 
+    arrange(str_rank(OTU, numeric = TRUE))
+
+prevalence <- ASV.present %>% 
+    group_by(OTU) %>% 
+    summarise(prevalence = sum(Abundance)/98) %>% 
+    arrange(str_rank(OTU, numeric = TRUE))
+
+df <- prevalence %>% 
+    full_join(shared.rate, by = 'OTU')
+
+ggplot(data = df, aes(x = prevalence, y = share.rate)) + 
+    geom_point() +
+    stat_function(fun = function(x) x^2, color = "blue", size = 1)  +
+    coord_fixed() +
+    labs(x = 'Prevalence of ASV', y = 'Proportion of ASV Present in Both Dogs')
+```
+
+Pairwise t test (paired by each ASV)
+
+$$H_0: share\ rate=prevlance^2 \\ H_a: share\ rate > prevlance^2$$
+
+```{r}
+t.test(df$share.rate, df$prevalence^2, paired = TRUE, alternative = 'greater')
+```
+
+To see if an ASV is significantly more shared than expected, we conduct a binomial test for each ASV. Here we show the top 20 ASVs that are significantly more shared.
+
+```{r}
+shared.ASV <- df %>% rowwise() %>% 
+    mutate(fold.diff=(share.rate/prevalence^2)) %>% 
+    mutate(residual=(share.rate-prevalence^2)) %>%
+    mutate(binom.test = binom.test(x=share.rate*49,
+                                  n=49,
+                                  p=prevalence^2,
+                                  alternative='greater')$p.value) %>% 
+    arrange(binom.test) %>% 
+    filter(binom.test <= 0.05)
+nrow(shared.ASV)
+shared.ASV %>% head(20) %>% gt()
+```
+
+```{r}
+sessioninfo::session_info()
+```
