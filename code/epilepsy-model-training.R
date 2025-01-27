@@ -1,17 +1,14 @@
 #!/usr/bin/env Rscript
-rm(list = ls())
 set.seed(2024)
 library(tidyverse)
 library(tidymodels)
 library(here)
-library(vip)
 library(future)
 plan(multisession)
 # load data
-ps.data <- readRDS(here('data','following_study','ml_data.rds'))
+data_split <- readRDS(here('data','following_study','data_split.rds'))
 
 # Split data
-data_split <- initial_split(ps.data, prop = 0.7, strata = Epileptic.or.Control)
 train_data <- training(data_split)
 test_data <- testing(data_split)
 
@@ -20,6 +17,10 @@ Recipe <- recipe(Epileptic.or.Control ~ ., data = train_data) %>%
     step_zv(all_predictors()) %>%
     step_corr(all_numeric_predictors(), threshold = 0.9) %>%
     step_dummy(Sex)
+
+#####################
+# Elastic Net model #
+#####################
 
 # Model 
 log.model <- logistic_reg(penalty = tune(), mixture = tune()) %>%
@@ -34,7 +35,7 @@ log.workflow <- workflow() %>%
 # Grid
 log.grid <- grid_random(penalty(), mixture(), size = 1000)
 
-# Hyperparameter tuning
+# tuning
 log.tunning <- log.workflow %>%
     tune_grid(
         resamples = bootstraps(train_data, times = 1000),
@@ -45,15 +46,16 @@ log.tunning <- log.workflow %>%
 
 best.log <- log.tunning %>% select_best(metric = "accuracy")
 
-# Finalize workflow
-final.log.workflow <- finalize_workflow(log.workflow, best.log)
-
-log.fit <- final.log.workflow %>%
+log.fit <- finalize_workflow(log.workflow, best.log) %>%
     last_fit(split = data_split)
 
 log.fit %>% collect_metrics()
 
-# Random Forest model
+
+#################
+# Random Forest #
+#################
+
 rf.model <- rand_forest(mode = "classification",
                         trees = tune(),
                         min_n = tune(),
@@ -69,14 +71,14 @@ rf.workflow <- workflow() %>%
 
 rf.boot <- bootstraps(train_data, times = 1000)
 
-# Tuning grid
+# Grid
 rf.grid <- grid_random(
     trees(),min_n(),
     finalize(mtry(), rf.boot),
     size = 1000
 )
 
-# Hyperparameter tuning
+# tuning
 rf.tunning <- rf.workflow %>%
     tune_grid(
         resamples = rf.boot,
@@ -88,24 +90,17 @@ rf.tunning <- rf.workflow %>%
 # Select best hyperparameters
 best.tree <- rf.tunning %>% select_best(metric = "accuracy")
 
-# Finalize workflow
-final.rf.workflow <- finalize_workflow(rf.workflow, best.tree)
-
 # Fit final model
-rf.fit <- final.rf.workflow %>%
+rf.fit <- finalize_workflow(rf.workflow, best.tree) %>%
     last_fit(split = data_split)
 
-rf.fit %>%
-    collect_metrics()
+rf.fit %>% collect_metrics()
 
-tree <- extract_workflow(rf.fit)
+##########################
+# Support Vector Machine #
+##########################
 
-tree %>% 
-    extract_fit_parsnip() %>% 
-    vip()
-
-# Random Forest model
-svm.model <- svm_linear(cost = tune()) %>% 
+svm.model <- svm_rbf(cost = tune(), rbf_sigma = tune()) %>% 
     set_engine("kernlab") %>%
     set_mode("classification")
 
@@ -116,7 +111,7 @@ svm.workflow <- workflow() %>%
     add_recipe(Recipe)
 
 # Tuning grid
-svm.grid <- grid_random(cost(), size = 1000)
+svm.grid <- grid_random(cost(), rbf_sigma(), size = 1000)
 
 # Hyperparameter tuning
 svm.tunning <- svm.workflow %>%
@@ -130,17 +125,17 @@ svm.tunning <- svm.workflow %>%
 # Select best hyperparameters
 best.svm <- svm.tunning %>% select_best(metric = "accuracy")
 
-# Finalize workflow
-final.svm.workflow <- finalize_workflow(svm.workflow, best.svm)
-
 # Fit final model
-svm.fit <- final.svm.workflow %>%
+svm.fit <- finalize_workflow(svm.workflow, best.svm) %>%
     last_fit(split = data_split)
 
-svm.fit %>%
-    collect_metrics()
+svm.fit %>% collect_metrics()
 
-# Random Forest model
+
+#########################
+# Multilayer Perceptron #
+#########################
+
 mlp.model <- mlp(hidden_units = tune(),
                  penalty = tune(),
                  epochs = tune()) %>% 
@@ -169,15 +164,19 @@ mlp.tunning <- mlp.workflow %>%
 # Select best hyperparameters
 best.mlp <- mlp.tunning %>% select_best(metric = "accuracy")
 
-# Finalize workflow
-final.mlp.workflow <- finalize_workflow(mlp.workflow, best.mlp)
-
 # Fit final model
-mlp.fit <- final.mlp.workflow %>%
+mlp.fit <- finalize_workflow(mlp.workflow, best.mlp) %>%
     last_fit(split = data_split)
 
-mlp.fit %>%
-    collect_metrics()
+mlp.fit %>% collect_metrics()
+
+session.info <- sessioninfo::session_info()
+
+final.models <- list(elastic.net = log.fit,
+                     random.forest = rf.fit,
+                     svm = svm.fit, 
+                     mlp = mlp.fit,
+                     session.info = session.info)
 
 # save environment
-save.image(here('data','following_study','ml_models.rds'))
+saveRDS(here('data','following_study','ml_models.rds'))
