@@ -280,7 +280,7 @@ test.results$taxon <- factor(test.results$taxon,
                              levels = top.p$taxon)
 test.results %>%
     mutate(direction = if_else(LFC > 0, 'positive', 'negative')) %>% 
-    filter(taxon %in% head(top.p$taxon, 20)) %>%
+    filter(taxon %in% head(top.p$taxon, 10)) %>%
     ggplot() +
     geom_tile(aes(x = method, y = taxon, fill = direction), color = 'black') +
     theme(axis.text.x = element_text(angle = 60, hjust = 1))

@@ -1,0 +1,70 @@
+---
+title: "Pilot Study Callback"
+author: "Yixuan Yang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# SetUp
+
+```{r message=FALSE}
+set.seed(2024)
+library(tidyverse)
+library(here)
+library(phyloseq)
+library(rstatix)
+theme_set(theme_bw())
+
+ps <- readRDS(here('data','following_study','ps_rarefied.rds'))%>%
+    filter_taxa(function(x) {
+        prevlance <- sum(x > 0) / length(x)
+        prevlance > 0.1
+        }, prune = TRUE)
+ps@phy_tree <- NULL
+ps.helico <- ps %>% subset_taxa(Genus == "Helicobacter")
+ps.lacto <- ps %>% subset_taxa(Genus == "Lactobacillus")
+```
+
+
+# Hellicobacter
+
+```{r}
+ps.helico.df <- psmelt(ps.helico) %>% 
+    group_by(OTU) %>% 
+    arrange(str_rank(Household, numeric = TRUE))
+pairwise_sign_test(ps.helico.df, Abundance ~ Epileptic.or.Control, ref.group = 'Epileptic', alternative = 'greater')
+```
+
+Does the sex factor related to the existance of Helicobactor between epiletpic and control group?
+
+```{r}
+ps.helico.df %>% 
+    split(.$OTU) %>%
+    lapply(function(x) summary(xtabs(sign(Abundance)~Sex+Epileptic.or.Control, data = x)))
+```
+
+Does the sex factor related to the existance of Helicobactor between epiletpic and control group?
+
+```{r}
+ftable(xtabs(sign(Abundance) ~ Pheno.Y.N + OTU, data = filter(ps.helico.df, Epileptic.or.Control == 'Epileptic')))
+```
+
+```{r}
+ps.helico.df %>% 
+    filter(Epileptic.or.Control == 'Epileptic') %>%
+    split(.$OTU) %>%
+    lapply(function(x) summary(xtabs(sign(Abundance)~Pheno.Y.N, data = x)))
+```
+
+# Lectobacillus
+
+```{r}
+ps.lacto.df <- psmelt(ps.lacto) %>% 
+    group_by(OTU) %>% 
+    arrange(str_rank(Household, numeric = TRUE))
+pairwise_sign_test(ps.lacto.df, Abundance ~ Epileptic.or.Control, ref.group = 'Epileptic', alternative = 'greater')
+```

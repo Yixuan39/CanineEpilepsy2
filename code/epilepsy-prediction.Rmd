@@ -84,7 +84,7 @@ log.grid <- grid_random(penalty(), mixture(), size = 1000)
 # Hyperparameter tuning
 log.tunning <- log.workflow %>%
   tune_grid(
-    resamples = bootstraps(train_data, times = 1000),
+    resamples = bootstraps(train_data, times = 300),
     grid = log.grid,
     metrics = metric_set(roc_auc, pr_auc, accuracy),
     control = control_grid(save_pred = TRUE)
@@ -118,7 +118,7 @@ rf.workflow <- workflow() %>%
   add_model(rf.model) %>%
   add_recipe(Recipe)
 
-rf.boot <- bootstraps(train_data, times = 1000)
+rf.boot <- bootstraps(train_data, times = 300)
 
 # Tuning grid
 rf.grid <- grid_random(
@@ -176,7 +176,7 @@ svm.grid <- grid_random(cost(), size = 1000)
 # Hyperparameter tuning
 svm.tunning <- svm.workflow %>%
   tune_grid(
-    resamples = bootstraps(train_data, times = 1000),
+    resamples = bootstraps(train_data, times = 300),
     grid = svm.grid,
     metrics = metric_set(roc_auc, pr_auc, accuracy),
     control = control_grid(save_pred = TRUE)
@@ -196,32 +196,32 @@ svm.fit %>%
   collect_metrics()
 ```
 
-```{r include=FALSE}
+```{r}
 # Random Forest model
 mlp.model <- mlp(hidden_units = tune(),
-                penalty = tune(),
-                epochs = tune()) %>% 
-  set_engine("nnet") %>%
-  set_mode("classification") %>% 
-  set_args(MaxNWts = 100000)
+                 penalty = tune(),
+                 epochs = tune()) %>% 
+    set_engine("nnet") %>%
+    set_mode("classification") %>% 
+    set_args(MaxNWts = 100000)
 
 
 # Workflow
 mlp.workflow <- workflow() %>%
-  add_model(mlp.model) %>%
-  add_recipe(Recipe)
+    add_model(mlp.model) %>%
+    add_recipe(Recipe)
 
 # Tuning grid
 mlp.grid <- grid_random(hidden_units(), penalty(), epochs(), size = 1000)
 
 # Hyperparameter tuning
 mlp.tunning <- mlp.workflow %>%
-  tune_grid(
-    resamples = bootstraps(train_data, times = 1000),
-    grid = mlp.grid,
-    metrics = metric_set(roc_auc, pr_auc, accuracy),
-    control = control_grid(save_pred = TRUE)
-  )
+    tune_grid(
+        resamples = bootstraps(train_data, times = 300),
+        grid = mlp.grid,
+        metrics = metric_set(roc_auc, pr_auc, accuracy),
+        control = control_grid(save_pred = TRUE)
+    )
 
 # Select best hyperparameters
 best.mlp <- mlp.tunning %>% select_best(metric = "accuracy")
@@ -231,8 +231,15 @@ final.mlp.workflow <- finalize_workflow(mlp.workflow, best.mlp)
 
 # Fit final model
 mlp.fit <- final.mlp.workflow %>%
-  last_fit(split = data_split)
+    last_fit(split = data_split)
 
 mlp.fit %>%
-  collect_metrics()
+    collect_metrics()
 ```
+
+
+```{r}
+# save environment
+save.image(here('data','following_study','ml_models.rds'))
+```
+

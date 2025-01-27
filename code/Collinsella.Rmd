@@ -19,23 +19,30 @@ knitr::opts_chunk$set(echo = TRUE)
 set.seed(2024)
 library(tidyverse)
 library(here)
+library(rstatix)
 library(phyloseq)
 theme_set(theme_bw())
 
-ps.collinsella <- readRDS(here('data','following_study','ps_rarefied.rds')) %>%
+ps.rare <- readRDS(here('data','following_study','ps_rarefied.rds')) %>%
     filter_taxa(function(x) {
         prevlance <- sum(x > 0) / length(x)
         prevlance > 0.1
-        }, prune = TRUE) %>% 
+        }, prune = TRUE)
+```
+
+# Start
+
+In this section, we are mainly focusing on 
+
+We have found that `Collinsella` is the top candidate that influence dog's microbiome. Here we investigate its existence.
+
+```{r}
+ps.collinsella <- ps.rare %>%
     subset_taxa(Genus == 'Collinsella') 
-ps.genus <- readRDS(here('data','following_study','ps_rarefied.rds')) %>% 
-    subset_taxa(Genus == 'Collinsella') %>% 
-    tax_glom('Genus')
-taxa_names(ps.genus) <- 'Genus'
 
 # add genus level collinsella count to otu table
 otu.df <- otu_table(ps.collinsella) %>% 
-    cbind(Genus = otu_table(ps.genus)) %>%
+    cbind(Genus = rowSums(otu_table(ps.collinsella))) %>%
     cbind(data.frame(sample_data(ps.collinsella))) %>% 
     pivot_longer(c(starts_with('ASV'), 'Genus'), names_to = 'ASV', values_to = 'Abundance')
 
@@ -45,13 +52,7 @@ lfc <- otu.df %>%
     summarise(LFC = log2(Abundance[Epileptic.or.Control == "Epileptic"] + 1) -
                   log2(Abundance[Epileptic.or.Control == "Control"] + 1),
               .groups = 'drop')
-```
 
-# Start
-
-We have found that `Collinsella` is the top candidate that influence dog's microbiome. Here we investigate its existence.
-
-```{r}
 ggplot(lfc) +
     geom_bar(aes(x = as.numeric(Household), y = LFC, fill = (LFC > 0)), stat = 'identity') +
     facet_wrap(~ASV, scales = 'free_y') +
@@ -61,26 +62,10 @@ ggplot(lfc) +
 Are there always more Collinsella ASVs in Epileptic group than control group?
 
 ```{r}
-library(rstatix)
 otu.df %>% 
-    arrange(Household, Epileptic.or.Control) %>%
+    arrange(Household) %>%
     group_by(ASV) %>%
     pairwise_sign_test(Abundance ~ Epileptic.or.Control, ref.group = 'Epileptic', alternative = 'greater')
-```
-
-
-## Distribution of Collinsella
-
-```{r message=FALSE}
-collinsella.prop <- readRDS(here('data','following_study','ps_rarefied.rds')) %>%
-    transform_sample_counts(function(x) x / sum(x)) %>% 
-    subset_taxa(Genus == 'Collinsella') %>% 
-    psmelt()
-collinsella.prop$OTU <- factor(collinsella.prop$OTU, levels = str_sort(unique(collinsella.prop$OTU), numeric = TRUE))
-ggplot(collinsella.prop) +
-    geom_boxplot(aes(x = OTU, y = Abundance)) +
-    labs(y = 'Proportion', color = 'Epileptic or Control') +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
 
@@ -134,6 +119,3 @@ otu.df %>%
     lapply(function(df) MASS::glm.nb((Abundance + 1) ~ Age..months., data = df) %>% summary)
 ```
 
-```{r}
-sessioninfo::session_info()
-```
