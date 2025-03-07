@@ -67,7 +67,6 @@ rsconnect/
 
 
 *junk
-*.csv
 *.tmp*
 
 # for this new repo
