@@ -1,8 +1,11 @@
 ---
 title: "Pilot Study"
 author: "Yixuan Yang"
-date: "`r Sys.Date()`"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    self_contained: true
 ---
 
 ```{r setup, include=FALSE}

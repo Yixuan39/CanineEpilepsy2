@@ -1,7 +1,6 @@
 ---
 title: "ASV Sharing Between Dogs"
 author: "Yixuan Yang"
-date: "`r Sys.Date()`"
 output:
   html_document:
     toc: true
