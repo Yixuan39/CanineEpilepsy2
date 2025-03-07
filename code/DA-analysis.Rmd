@@ -1,7 +1,6 @@
 ---
 title: "Differential Abundance Analysis"
 author: "Yixuan Yang"
-date: "`r Sys.Date()`"
 output:
   html_document:
     toc: true
@@ -38,35 +37,20 @@ max.cores <- parallel::detectCores()
 
 # Taxa Filtering
 
-Before the DA analysis, we want to check the frequency of ASV present in each household. For ASV with low frequency across households, we can ignore them so that we can reduce the number of tests and save computational resources.
-
-```{r} 
-# check ASV present by household
-present <- ps %>%
-    transform_sample_counts(sign) %>% 
-    psmelt() %>%
-    group_by(Household, OTU) %>%
-    summarise(present.in.house = sign(sum(Abundance)), .groups = 'drop') %>% 
-    group_by(OTU) %>%
-    summarise(house.freq = sum(present.in.house), .groups = 'drop') %>% 
-    arrange(str_rank(OTU, numeric = TRUE))
-head(present)
-```
-
-Tracing the number of ASV retained and average read depth after filtering
+Before the DA analysis, we want to filter the data by prevlence and minimum read depth. Here we are showing a tracing plot of the remained read and taxa for different prevlence threshold with minimum read depth of 50.
 
 ```{r} 
 # test for filtering threshold
-test.filter <- function(ps, present, threshold) {
-    ASV <- present %>% filter(house.freq >= threshold) %>% pull(OTU)
-    sub.ps.otu <- ps %>% prune_taxa(ASV, .) %>% otu_table()
-    retained.read <- sub.ps.otu %>% rowSums() %>% mean()
-    retained.taxa <- sub.ps.otu %>% ncol()
+test.filter <- function(ps, prevlence, min_read = 50) {
+    sub.ps <- ps %>%
+      filter_taxa(function(x) sum(x)>min_read & sum(x>0)/length(x) >= prevlence, prune = TRUE)
+    retained.read <- otu_table(sub.ps) %>% rowSums() %>% mean()
+    retained.taxa <- otu_table(sub.ps) %>% ncol()
     orig.read <- otu_table(ps) %>% rowSums() %>% mean()
     orig.taxa <- otu_table(ps) %>% ncol()
     return(data.frame(taxon_size = retained.taxa/orig.taxa, average.read.depth = retained.read/orig.read))
 }
-trace <- map_dfr(1:49, function(i) test.filter(ps=ps, present=present, threshold=i))
+trace <- map_dfr(seq(0,0.9, 0.1), function(i) test.filter(ps=ps, prevlence=i))
 
 ggplot(trace, aes(x = average.read.depth, y = taxon_size)) +
     geom_point() +
@@ -77,19 +61,19 @@ ggplot(trace, aes(x = average.read.depth, y = taxon_size)) +
     ylab('percentage of ASV remained') 
 ```
 
-We are showing percentage of read and ASV remained if we keep ASVs present in at least n households. In this study, we choose to keep ASVs that present in at least 5 households to retain 97% of reads and only test for 20% of ASVs.
+By setting the minimum prevalence to 0.1 and minimum read depth of 50, we kept 13% ASVs with 96% reads remained.
 
 ```{r} 
 head(trace)
-# only keep ASVs present in more than 5 households
-keep <- filter(present, house.freq >= 5) %>% pull(OTU)
+keep <- ps %>% 
+  filter_taxa(function(x) sum(x)>100 & sum(x>0)/length(x)>0.1, prune = TRUE) %>%
+  tax_table() %>% rownames()
 ```
 
 Basic information of non-rarefied data
 
 ```{r} 
 ps <- ps %>% prune_taxa(keep, .)
-saveRDS(ps, here('data', 'following_study', 'ps_subset.rds'))
 ps
 ```
 
@@ -97,7 +81,6 @@ Basic information of rarefied data
 
 ```{r} 
 ps.rare <- ps.rare %>% prune_taxa(keep, .)
-saveRDS(ps.rare, here('data', 'following_study', 'ps_subset_rarefied.rds'))
 ps.rare
 ```
 
@@ -148,6 +131,7 @@ ancombc.test <- ancombc(data = ps,
                         formula = 'Epileptic.or.Control + Household',
                         taxa_are_rows = FALSE,
                         prv_cut = 0,
+                        conserve = TRUE,
                         n_cl = max.cores)
 
 ancombc.test <- data.frame(taxon = ancombc.test$res$lfc$taxon,
@@ -166,6 +150,7 @@ corncob.test <- differentialTest(formula= ~ Epileptic.or.Control + Household,
                                  formula_null = ~ Household,
                                  phi.formula_null = ~ 1,
                                  test = 'LRT',
+                                 fdr_cutoff = 1, # don't filter by FDR
                                  data = ps,
                                  taxa_are_rows = FALSE)
 
@@ -216,7 +201,7 @@ paired.t.test <- function(data) {
                             splited.data[['Control']]$Abundance,
                             paired = TRUE, alternative = 'two.sided')
     data.frame(taxon = unique(data$OTU),
-               LFC = log2(mean(splited.data[['Epileptic']]$Abundance + 1)) - log2(mean(splited.data[['Control']]$Abundance + 1)),
+               LFC = log2(mean(splited.data[['Epileptic']]$Abundance + 0.5)) - log2(mean(splited.data[['Control']]$Abundance + 0.5)),
                p.value = t.test.result$p.value)
 }
 
@@ -298,17 +283,6 @@ effect.plot <- test.results %>%
                  position="dodge", stat = 'identity', width = 0.7) +
         theme(axis.text.x = element_text(angle = 60, hjust = 1)) 
 effect.plot
-
-
-effect.plot2 <- test.results %>%
-    filter(method != 'corncob') %>%
-    mutate(direction = if_else(LFC > 0, 'positive', 'negative')) %>% 
-    filter(taxon %in% head(top.p$taxon, 10)) %>%
-    ggplot() +
-    geom_point(aes(x = method, y = taxon, colour = direction, size = abs(LFC))) +
-    theme(axis.text.x = element_text(angle = 60, hjust = 1))
-
-effect.plot2
 ```
 
 correlation of p-value for each method.
@@ -331,9 +305,8 @@ cor.plot
 library(patchwork)
 cor.plot + effect.plot + plot_annotation(tag_levels = 'a')
 ggsave(here('figures', 'DA-analysis1.png'), width = 8, height = 4.5)
-cor.plot + effect.plot2 + plot_annotation(tag_levels = 'a')
-ggsave(here('figures', 'DA-analysis2.png'), width = 8, height = 4.5)
 ```
+
 
 ```{r}
 sessioninfo::session_info()
