@@ -1,7 +1,6 @@
 ---
 title: "Data Profile"
 author: "Yixuan Yang"
-date: "`r Sys.Date()`"
 output:
   html_document:
     toc: true
@@ -25,26 +24,19 @@ theme_set(theme_bw())
 Both pilot and following study data are loaded
 
 ```{r}
-ps <- read_rds(here('data','following_study','ps_rarefied.rds'))
-ps.pilot <- read_rds(here('data','pilot_study','ps_rarefied.rds'))
+ps <- read_rds(here('data','following_study','ps.rds'))
+ps.pilot <- read_rds(here('data','pilot_study','ps.rds'))
+sam <- data.frame(sample_data(ps))
 ```
 
 # Data Profile
 
-```{r}
-sam <- sample_data(ps) %>% data.frame()
-sam <- sam %>% 
-  mutate(`health condition` = Epileptic.or.Control) %>% 
-  mutate(`Breed Group` = Breed.Group..1.) %>%
-  mutate(`Phenobarbital Exposure` = Pheno.Y.N) %>%
-  mutate(`Age (months)` = Age..months.) %>%
-  dplyr::select(`health condition`, `Breed Group`, Sex, `Phenobarbital Exposure`, `Age (months)`)
-```
-
 Check frequency of breed group between health condition and perform chi-square and proportion test
 
 ```{r}
-tb <- xtabs(~`Breed Group` + `health condition`, data = sam)
+tb <- sam %>% 
+  filter(!is.na(Breed.Group..1.), is.na(Breed.Group..2.)) %>%
+  xtabs(~Breed.Group..1. + Epileptic.or.Control, data = .)
 tb
 chisq.test(tb)
 prop.test(tb)
@@ -54,45 +46,101 @@ prop.test(tb)
 Check frequency of sex between health condition and perform chi-square and proportion test
 
 ```{r}
-tb <- xtabs(~`Sex` + `health condition`, data = sam)
+tb <- xtabs(~Sex + Epileptic.or.Control, data = sam)
 tb
 chisq.test(tb)
-prop.test(tb, alternative = 'greater')
 ```
 
-Check frequency of Phenobarbital Exposure between health condition and perform chi-square and proportion test
+Check frequency of Phenobarbital Administration between health condition and perform chi-square and proportion test
 
 ```{r}
-tb <- xtabs(~`Phenobarbital Exposure` + `health condition`, data = sam)
+tb <- xtabs(~Pheno.Y.N + Epileptic.or.Control, data = sam)
 tb
+```
+
+Does Phenobarbital Administration effective?
+
+```{r}
+tb <- sam %>% 
+  filter(Epileptic.or.Control == 'Epileptic') %>% 
+  xtabs(~Pheno.Y.N + Seizure.Freedom..Y.N., data = .)
+tb
+chisq.test(tb)
 ```
 
 Get distribution of Dogs age in month
 
 ```{r}
 sam %>% 
-  group_by(`health condition`) %>% 
-  summarise(mean= mean(`Age (months)`, na.rm = TRUE), `standard deviation` = sd(`Age (months)`, na.rm = TRUE))
+  group_by(Epileptic.or.Control) %>% 
+  summarise(mean= mean(Age..months.), `standard deviation` = sd(Age..months.))
 ```
+
+# 16S rRNA Sequencing Profile
 
 Double-check if microbial pattern is consistent with health condition. Here we draw the abundance plot by Phylum
 
 ```{r}
 ps.all <- merge_phyloseq(ps, ps.pilot) %>% 
   tax_glom('Phylum') %>% 
-  transform_sample_counts(function(x) x / sum(x)) %>%
+  transform_sample_counts(function(x) x / sum(x)) %>% # transform to proportional
   psmelt()
 ps.all$Phylum <- as.character(ps.all$Phylum)
 ps.all$Phylum[ps.all$Abundance < 0.01] <- 'Others'
 ps.all$study <- factor(ps.all$study, levels = c('pilot', 'present'))
+```
 
+
+```{r}
 ggplot(data = ps.all) + 
   geom_col(aes(Sample, Abundance, fill = Phylum),position = "fill", width = 1) +
   theme(axis.text.x=element_blank(),
         axis.ticks.x=element_blank())  +
+  scale_y_continuous(labels = scales::percent) +
   facet_grid(. ~ study, scales="free_x", space="free_x") +
   labs(y = 'Relative Abundance', x = 'Sample', fill = 'Phylum')
 ggsave(here('figures','abundance_phylum.png'), width = 6, height = 4)
+```
+
+```{r}
+phylum.composition <- ps.all %>% 
+  split(.$study) %>%
+  lapply(function(x) x %>% 
+           group_by(Sample,Phylum) %>%
+           summarise(Abundance = sum(Abundance)) %>%
+           arrange(desc(Abundance)) %>% 
+           pivot_wider(names_from = Phylum, values_from = Abundance, values_fill = 0))
+phylum.composition %>% head()
+```
+
+```{r}
+phylum.composition %>% lapply(summary)
+```
+
+```{r}
+genus.ps <- ps %>% subset_taxa(Phylum == 'Actinobacteriota') %>% 
+  transform_sample_counts(function(x) x / sum(x)) %>% 
+  psmelt()
+genus.ps$Genus[genus.ps$Abundance < 0.01] <- 'Others'
+genus.ps %>% 
+  group_by(Sample, Genus) %>% 
+  summarise(Abundance = sum(Abundance), .groups = 'drop') %>% 
+  group_by(Genus) %>% 
+  summarise(mean = sum(Abundance)/98, `standard deviation` = sd(Abundance)) %>% 
+  arrange(desc(mean))
+```
+
+```{r}
+genus.ps <- ps %>% subset_taxa(Phylum == 'Firmicutes') %>% 
+  transform_sample_counts(function(x) x / sum(x)) %>% 
+  psmelt()
+genus.ps$Genus[genus.ps$Abundance < 0.01] <- 'Others'
+genus.ps %>% 
+  group_by(Sample, Genus) %>% 
+  summarise(Abundance = sum(Abundance), .groups = 'drop') %>% 
+  group_by(Genus) %>% 
+  summarise(mean = sum(Abundance)/98, `standard deviation` = sd(Abundance)) %>% 
+  arrange(desc(mean))
 ```
 
 ```{r}
