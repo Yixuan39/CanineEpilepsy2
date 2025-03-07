@@ -1,7 +1,6 @@
 ---
 title: "Alpha and Beta Diversity Analysis"
 author: "Yixuan Yang"
-date: "`r Sys.Date()`"
 output:
   html_document:
     toc: true
@@ -24,15 +23,15 @@ library(phyloseq)
 library(vegan)
 library(rstatix)
 theme_set(theme_bw())
-options(digits=4)
 max.core <- parallel::detectCores()
 
 ps.rare <- readRDS(here('data','following_study','ps_rarefied.rds')) 
 sample_data(ps.rare)$Shannon <- estimate_richness(ps.rare)$Shannon
 # transform data into proportion
-ps.rare.prop <- ps.rare %>% transform_sample_counts(function(x) x/sum(x))
+ps.rare.prop <- ps.rare %>%
+  transform_sample_counts(function(x) x/sum(x))
 
-sam <- data.frame(sample_data(ps.rare))
+sam <- data.frame(sample_data(ps.rare.prop))
 ```
 
 # Functions
@@ -143,14 +142,14 @@ permdisp(ps.rare.prop, 'Epileptic.or.Control', 'wunifrac')
 ## Alpha Diversity
 
 ```{r}
-sam.breed <- sam %>%
-  filter(is.na(Breed.Group..1.) == FALSE) %>% 
-  filter(is.na(Breed.Group..2.) == TRUE, is.na(Breed.Group..3.) == TRUE)
-nrow(sam.breed)
+ps.breed <- ps.rare.prop %>%
+  subset_samples(!is.na(Breed.Group..1.) & is.na(Breed.Group..2.))
+ps.breed
+
+sam.breed <- data.frame(sample_data(ps.breed))
   
 ggplot(sam.breed) +
     geom_point(aes(x = Breed.Group..1., y = Shannon, colour = Breed.Group..1.)) +
-    facet_wrap(~Epileptic.or.Control) + 
     theme(axis.text.x = element_blank(), axis.ticks.x.bottom = element_blank())
 
 anova_test(Shannon~Household + Breed.Group..1., data = sam.breed, type = 1)
@@ -161,19 +160,19 @@ anova_test(Shannon~Household + Breed.Group..1., data = sam.breed, type = 1)
 ### Bray-Curtis distance
 
 ```{r}
-plot_ord(ps.rare.prop, 'Breed.Group..1.','MDS','bray')
-plot_ord(ps.rare.prop, 'Breed.Group..1.','NMDS','bray')
-permanova(ps.rare.prop, 'Household + Breed.Group..1.', 'bray')
-permdisp(ps.rare.prop, 'Breed.Group..1.', 'bray')
+plot_ord(ps.breed, 'Breed.Group..1.','MDS','bray')
+plot_ord(ps.breed, 'Breed.Group..1.','NMDS','bray')
+permanova(ps.breed, 'Household + Breed.Group..1.', 'bray')
+permdisp(ps.breed, 'Breed.Group..1.', 'bray')
 ```
 
 ### Weighted-Unifrac distance
 
 ```{r}
-plot_ord(ps.rare.prop, 'Breed.Group..1.','MDS','wunifrac')
-plot_ord(ps.rare.prop, 'Breed.Group..1.','NMDS','wunifrac')
-permanova(ps.rare.prop, 'Household + Breed.Group..1.', 'wunifrac')
-permdisp(ps.rare.prop, 'Breed.Group..1.', 'wunifrac')
+plot_ord(ps.breed, 'Breed.Group..1.','MDS','wunifrac')
+plot_ord(ps.breed, 'Breed.Group..1.','NMDS','wunifrac')
+permanova(ps.breed, 'Household + Breed.Group..1.', 'wunifrac')
+permdisp(ps.breed, 'Breed.Group..1.', 'wunifrac')
 ```
 
 # Drug Effect
@@ -181,7 +180,9 @@ permdisp(ps.rare.prop, 'Breed.Group..1.', 'wunifrac')
 ## Alpha Diversity
 
 ```{r}
-sam.drug <- sam %>% filter(Epileptic.or.Control == 'Epileptic')
+ps.drug <- ps.rare.prop %>% 
+  subset_samples(Epileptic.or.Control == 'Epileptic')
+sam.drug <- data.frame(sample_data(ps.drug))
 ggplot(sam.drug, aes(x = Pheno.Y.N, y = Shannon)) + 
     geom_boxplot() + geom_jitter(height = 0, width = 0.25)
 anova_test(Shannon~Pheno.Y.N, data = sam.drug, type = 1)
@@ -192,7 +193,6 @@ anova_test(Shannon~Pheno.Y.N, data = sam.drug, type = 1)
 ### Bray-Curtis distance
 
 ```{r}
-ps.drug <- ps.rare.prop %>% subset_samples(Epileptic.or.Control == 'Epileptic')
 plot_ord(ps.drug, 'Pheno.Y.N','MDS','bray')
 plot_ord(ps.drug, 'Pheno.Y.N','NMDS','bray')
 permanova(ps.drug, 'Pheno.Y.N', 'bray')
@@ -245,18 +245,25 @@ permdisp(ps.rare.prop, 'Sex', 'wunifrac')
 
 # Age Effect
 
+```{r}
+age <- sam %>% 
+    group_by(Household) %>% 
+    summarise(age.diff = abs(diff(Age..months./12))) 
+age$age.diff %>% hist()
+age$age.diff %>% summary()
+sum(age$age.diff < 4.5)
+```
+
+
 ## Alpha Diversity
 
 ```{r}
-sam[which(is.na(sam$Age..months.)),'Household'] 
-# remove households that have dog with unspecific age
-sam.Age <- sam %>% filter(!(Household %in% c('9', '24')))
-ggplot(sam.Age,) +
+ggplot(sam) +
     geom_line(aes(x = as.numeric(Household), y = Age..months., group = Household)) + 
     geom_point(aes(x = as.numeric(Household), y = Age..months., group = Household, colour = Epileptic.or.Control)) +
     xlab('Household') + ylab('Age in month')
 
-anova_test(Shannon~Household+Age..months., data = sam.Age, type = 1)
+anova_test(Shannon~Household+Age..months., data = sam, type = 1)
 ```
 
 ## Beta Diversity
@@ -264,14 +271,13 @@ anova_test(Shannon~Household+Age..months., data = sam.Age, type = 1)
 ### Bray-Curtis distance
 
 ```{r}
-ps.age <- ps.rare.prop %>% subset_samples(!(Household %in% c('9', '24')))
-permanova(ps.age, 'Age..months.', 'bray', strata = 'Household')
+permanova(ps.rare.prop, 'Age..months.', 'bray', strata = 'Household')
 ```
 
 ### Weighted-Unifrac distance
 
 ```{r}
-permanova(ps.age, 'Age..months.', 'wunifrac')
+permanova(ps.rare.prop, 'Age..months.', 'wunifrac')
 ```
 
 ```{r}
