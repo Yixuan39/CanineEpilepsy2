@@ -11,7 +11,6 @@
 
 <meta name="author" content="Yixuan Yang" />
 
-<meta name="date" content="2025-01-20" />
 
 <title>Metadata Cleaning</title>
 
@@ -1481,7 +1480,6 @@ border-radius: 0px;
 
 <h1 class="title toc-ignore">Metadata Cleaning</h1>
 <h4 class="author">Yixuan Yang</h4>
-<h4 class="date">2025-01-20</h4>
 
 </div>
 
@@ -1495,7 +1493,7 @@ library(phyloseq)
 library(DECIPHER)</code></pre>
 <div id="read-in-metadata" class="section level1">
 <h1>Read in metadata</h1>
-<pre class="r"><code>file &lt;- &#39;Epilepsy study mapping file with patient info updated 1.22.24 for microbiome analysis.xlsx&#39;
+<pre class="r"><code>file &lt;- &#39;Epilepsy study mapping file with patient info updated 1.22.24 for microbiome analysis(fixed).xlsx&#39;
 meta_data &lt;- read_excel(here(&#39;data&#39;, &#39;following_study&#39;, file), 
                         n_max = 118,
                         na = &#39;.&#39;) %&gt;%
@@ -1542,7 +1540,7 @@ meta_data &lt;- meta_data %&gt;% dplyr::select(-COMMENTS) %&gt;% data.frame()
 # match sample name same as that in the asv table
 rownames(meta_data) &lt;- &#39;Netti&#39; %&gt;%
     str_c(sprintf(&quot;%03d&quot;, as.integer(meta_data$SampleID2)))
-meta_data &lt;- meta_data %&gt;% add_column(study = &#39;following&#39;)
+meta_data &lt;- meta_data %&gt;% add_column(study = &#39;present&#39;)
 meta_data &lt;- meta_data %&gt;% 
     arrange(str_rank(Household, numeric = T), Epileptic.or.Control)</code></pre>
 <p>Sex column contains information about reproductive status, here we
@@ -1747,14 +1745,14 @@ saveRDS(ps.rarefied, file = here(&#39;data&#39;,&#39;following_study&#39;,&#39;p
 <pre><code>## ─ Session info ───────────────────────────────────────────────────────────────
 ##  setting  value
 ##  version  R version 4.4.1 (2024-06-14)
-##  os       macOS 15.2
+##  os       macOS 15.3
 ##  system   aarch64, darwin20
 ##  ui       X11
 ##  language (EN)
 ##  collate  en_US.UTF-8
 ##  ctype    en_US.UTF-8
 ##  tz       America/New_York
-##  date     2025-01-20
+##  date     2025-02-14
 ##  pandoc   3.5 @ /Users/yixuanyang/miniforge3/bin/ (via rmarkdown)
 ## 
 ## ─ Packages ───────────────────────────────────────────────────────────────────

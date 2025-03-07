@@ -1,7 +1,6 @@
 ---
 title: "Metadata Cleaning"
 author: "Yixuan Yang"
-date: "`r Sys.Date()`"
 output:
   html_document:
     toc: true
@@ -26,7 +25,7 @@ library(DECIPHER)
 # Read in metadata
 
 ```{r}
-file <- 'Epilepsy study mapping file with patient info updated 1.22.24 for microbiome analysis.xlsx'
+file <- 'Epilepsy study mapping file with patient info updated 1.22.24 for microbiome analysis(fixed).xlsx'
 meta_data <- read_excel(here('data', 'following_study', file), 
                         n_max = 118,
                         na = '.') %>%
@@ -42,7 +41,9 @@ meta_data$`Zip Code` <- meta_data$`Zip Code` %>%
     str_remove('\\.0') %>%
     str_replace('O','0')
 # remove comments row in excel
-meta_data <- meta_data %>% dplyr::select(-COMMENTS) %>% data.frame()
+meta_data <- meta_data %>%
+  dplyr::select(-COMMENTS) %>%
+  data.frame()
 # match sample name same as that in the asv table
 rownames(meta_data) <- 'Netti' %>%
     str_c(sprintf("%03d", as.integer(meta_data$SampleID2)))
@@ -70,6 +71,13 @@ Set Epileptic.or.Control as factor
 ```{r}
 meta_data$Epileptic.or.Control <- factor(meta_data$Epileptic.or.Control, levels = c('Control','Epileptic'))
 ```
+
+# GI inflammatry information
+
+```{r}
+#meta_data <- meta_data %>% left_join(GI.inflam, by = 'Dog.Name')
+```
+
 
 
 # Create phyloseq object
@@ -260,8 +268,6 @@ check if data are paired by household
 if (!identical(sample_data(ps)$Household[seq(1,98,2)], sample_data(ps)$Household[seq(1,98,2)+1])) stop('data is not paired')
 if (!identical(sample_data(ps.rarefied)$Household[seq(1,98,2)], sample_data(ps.rarefied)$Household[seq(1,98,2)+1])) stop('data is not paired')
 ```
-
-
 
 # Save Data
 
