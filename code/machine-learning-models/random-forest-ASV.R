@@ -73,7 +73,7 @@ for (i in 1:30) {
     
     result <- data.frame(method = 'random forest',
                          data = 'ASV',
-                         accuracy = unlist(collect_metrics(log.fit)[1,3]))
+                         accuracy = unlist(collect_metrics(rf.fit)[1,3]))
     performance <- performance %>% bind_rows(result)
 }
 

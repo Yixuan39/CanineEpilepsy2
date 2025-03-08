@@ -67,7 +67,7 @@ for (i in 1:30) {
     
     result <- data.frame(method = 'SVM',
                          data = 'phylum',
-                         accuracy = unlist(collect_metrics(log.fit)[1,3]))
+                         accuracy = unlist(collect_metrics(svm.fit)[1,3]))
     performance <- performance %>% bind_rows(result)
 }
 
