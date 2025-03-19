@@ -255,8 +255,18 @@ tb <- top.p %>%
                colors = scales::col_bin(palette = c(scales::hue_pal()(1), "transparent"),
                                         bins = c(-Inf, 0.05, Inf)))
 tb
-writexl::write_xlsx(top.p, here('data', 'following_study', 'top_ASV.xlsx'))
 ```
+
+There are 2 ASVs that are not classified to genus level by the naive bayes classifier. Here we search it with the BLAST nt/nr database
+
+```{r}
+refseq(ps)[c('ASV446', 'ASV645')] %>% dada2:::pfasta(ids = c('ASV446', 'ASV645'))
+```
+
+For ASV446, the top hit is Firmicutes, Mediterraneibacter (Phylum, Genus)
+
+For ASV645, the top hit is Firmicutes, Lachnospiraceae (Phylum, Family)
+
 
 Does the effect size of each method agreed in direction? The plot below shows that including `corncob` all methods have consistent direction of effect size.
 
