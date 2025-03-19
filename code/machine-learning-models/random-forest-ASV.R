@@ -21,6 +21,7 @@ ps.data <- bind_cols(sam, otu)
 performance <- data.frame()
 
 for (i in 1:30) {
+    message('Iteration: ', i)
     set.seed(i)
     # Split data
     data_split <- group_initial_split(ps.data, group = 'Household', prop = 0.7)
@@ -39,8 +40,7 @@ for (i in 1:30) {
                             trees = tune(),
                             min_n = tune(),
                             mtry = tune()) %>%
-        set_engine("ranger", importance = "impurity") %>%
-        set_mode("classification")
+        set_engine("ranger")
     
     
     # Workflow
@@ -48,20 +48,21 @@ for (i in 1:30) {
         add_model(rf.model) %>%
         add_recipe(Recipe)
     
-    rf.cv <- group_vfold_cv(train_data, group = 'Household', v = 10, repeats = 10)
+    rf.cv <- group_vfold_cv(train_data, group = 'Household', v = 10)
     
     # Tuning grid
-    rf.grid <- grid_regular(trees(range = c(50, 150)),
-                            min_n(range = c(5, 30)),
-                            mtry(range = c(floor(sqrt(ncol(train_data))), ceiling(2*sqrt(ncol(train_data))))),
-                            levels = 10)
+    rf.grid <- parameters(trees(),
+                          min_n(),
+                          mtry = mtry_prop())
     
     # Hyperparameter tuning
     rf.tunning <- rf.workflow %>%
-        tune_grid(
+        tune_bayes(
             resamples = rf.cv,
-            grid = rf.grid,
-            control = control_grid(save_pred = TRUE)
+            param_info = rf.grid,
+            initial = 5,    
+            iter = 40,       
+            control = control_bayes(no_improve = 10, save_pred = TRUE)
         )
     
     # Select best hyperparameters

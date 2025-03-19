@@ -21,353 +21,109 @@ library(tidyverse)
 library(tidymodels)
 library(phyloseq)
 library(here)
-library(vip)
-library(future)
 library(skimr)
 library(patchwork)
-plan(multisession)
 theme_set(theme_bw())
 # load data
 ps.rare <- readRDS(here('data','following_study','ps_rarefied.rds')) %>% 
-  filter_taxa(function(x) sum(x > 0)/length(x) > 0.1, prune = TRUE) %>%
-  tax_glom(taxrank = 'Phylum')
+  filter_taxa(function(x) sum(x > 0)/length(x) > 0.1, prune = TRUE)
 ```
 
 # Start
 
 In this section, we want to try to use machine learning models to predict the epilepsy status of the dogs based on their microbiome data. Here we are using the rarefied data with each taxa has at least 10% prevalence in our data. According to previous findings, we choose to use sex, age, and microbiome information to predict the epilepsy status of the dogs.
 
+Prediction accuracy is not only affected by the model but also by the structure of the data. We used three common models in microbial study: logistic regression, random forest, and support vector machine. 
+
+For each model, we tried to use:
+
+1. microbial data at phylum level
+
+2. microbial data at ASV level
+
+3. dimension reduced microbial data by `PCoA` method
+
+We used 70% data to train models and 30% data for testing. All models are trained and tested using 10-fold cross-validation repeated 10 times. The best model is selected based on the accuracy metric. As model performance varies, each model is trained and tested 30 times, and the mean and standard deviation of the accuracy are reported.
+
+# Data Preprocess
+
+**ASV level**
+
 ```{r}
-ps.rare
-sam <- data.frame(sample_data(ps.rare)) %>% 
-  dplyr::select(Age..months., Sex, Epileptic.or.Control, Household)
-sam$Epileptic.or.Control <- factor(sam$Epileptic.or.Control, levels = c('Epileptic', 'Control'))
-otu <- data.frame(otu_table(ps.rare))
-skim(sam)
-```
-
-# Epilepsy Prediction with Microbiome Data
-
-## Data Preprocess
-
-Before the model training, we need to preprocess the data. We use 70% data for training and 30% for testing. Variables with nearly zero variance are removed, and the nominal variables are converted to dummy variables. The age and microbiome data are normalized.
-
-```{r}
+ps.rare.asv <- ps.rare
+sam <- data.frame(sample_data(ps.rare.asv)) %>% 
+    dplyr::select(Age..months., Sex, Epileptic.or.Control, Household)
+otu <- data.frame(otu_table(ps.rare.asv))
 # combine data to a data frame
 ps.data <- bind_cols(sam, otu)
-# Split data
 data_split <- group_initial_split(ps.data, group = 'Household', prop = 0.7)
-train_data <- training(data_split)
-test_data <- testing(data_split)
-
-# Recipe
-Recipe <- recipe(Epileptic.or.Control ~ ., data = train_data) %>%
-  update_role(Household, new_role = 'group variable') %>%
-  step_nzv(all_predictors()) %>%
-  step_dummy(all_nominal_predictors()) %>%
-  step_normalize(Age..months., starts_with('ASV'))
+Recipe <- recipe(Epileptic.or.Control ~ ., data = training(data_split)) %>%
+        update_role(Household, new_role = 'group variable') %>%
+        step_nzv(all_predictors()) %>%
+        step_dummy(all_nominal_predictors()) %>%
+        step_normalize(Age..months., starts_with('ASV'))
 Recipe
 ```
 
+**Phylum level**
+
 ```{r}
-# a function to retrive model performance
-model_performance <- function(model, response = 'Epileptic.or.Control') {
-  confusion.matrix <- augment(model) %>% 
-    conf_mat(truth = response, estimate = .pred_class) %>% 
-    autoplot(type = 'heatmap')
-  roc.curve <- augment(model) %>% 
-    roc_curve(truth = response, .pred_Epileptic) %>%
-    autoplot()
-  metrics <- model %>% collect_metrics()
-  p <- confusion.matrix + roc.curve + plot_annotation(tag_levels = 'a')
-  print(p)
-  print(metrics)
-}
+ps.rare.phylum <- ps.rare  %>% 
+    tax_glom(taxrank = 'Phylum')
+sam <- data.frame(sample_data(ps.rare.phylum)) %>% 
+    dplyr::select(Age..months., Sex, Epileptic.or.Control, Household)
+otu <- data.frame(otu_table(ps.rare.phylum))
+# combine data to a data frame
+ps.data <- bind_cols(sam, otu)
+data_split <- group_initial_split(ps.data, group = 'Household', prop = 0.7)
+Recipe <- recipe(Epileptic.or.Control ~ ., data = training(data_split)) %>%
+        update_role(Household, new_role = 'group variable') %>%
+        step_nzv(all_predictors()) %>%
+        step_dummy(all_nominal_predictors()) %>%
+        step_normalize(Age..months., starts_with('ASV'))
+Recipe
 ```
 
-
-## Logistic Regression
-
-We first use logistic regression to predict the epilepsy status of the dogs. We use the `glmnet` engine with elastic net regularization. We use 10-fold cross-validation repeated 10 times to tune the hyperparameters. The best model is selected based on the accuracy metric.
+**PCoA**
 
 ```{r}
-# Model 
-log.model <- logistic_reg(penalty = tune(), mixture = tune()) %>%
-  set_mode('classification') %>% 
-  set_engine("glmnet")
-
-# Workflow
-log.workflow <- workflow() %>%
-  add_model(log.model) %>%
-  add_recipe(Recipe)
-
-# Grid
-log.grid <- grid_regular(penalty(), mixture(),
-                         levels = c(penalty = 10, mixture = 10))
-
-# Hyperparameter tuning
-log.tunning <- log.workflow %>%
-  tune_grid(
-    resamples = group_vfold_cv(train_data, group = 'Household', v = 10, repeats = 10),
-    grid = log.grid,
-    control = control_grid(save_pred = TRUE)
-  )
-
-best.log <- log.tunning %>% select_best(metric = "accuracy")
-
-log.fit <- finalize_workflow(log.workflow, best.log) %>%
-  last_fit(split = data_split)
-
-model_performance(log.fit)
-```
-
-## Random Forest
-
-We use the random forest model to predict the epilepsy status of the dogs. We use the `ranger` engine with the impurity importance method. We use 10-fold cross-validation repeated 10 times to tune the hyperparameters. The best model is selected based on the accuracy metric.
-
-```{r}
-# Random Forest model
-rf.model <- rand_forest(mode = "classification",
-                        trees = tune(),
-                        min_n = tune(),
-                        mtry = tune()) %>%
-  set_engine("ranger", importance = "impurity") %>%
-  set_mode("classification")
-
-
-# Workflow
-rf.workflow <- workflow() %>%
-  add_model(rf.model) %>%
-  add_recipe(Recipe)
-
-rf.cv <- group_vfold_cv(train_data, group = 'Household', v = 10, repeats = 10)
-
-# Tuning grid
-rf.grid <- grid_regular(trees(range = c(50, 150)),
-                            min_n(range = c(5, 30)),
-                            mtry(range = c(floor(sqrt(ncol(train_data))), ceiling(2*sqrt(ncol(train_data))))),
-                            levels = 10)
-
-# Hyperparameter tuning
-rf.tunning <- rf.workflow %>%
-  tune_grid(
-    resamples = rf.cv,
-    grid = rf.grid,
-    control = control_grid(save_pred = TRUE)
-  )
-
-# Select best hyperparameters
-best.tree <- rf.tunning %>% select_best(metric = "accuracy")
-
-# Fit final model
-rf.fit <- finalize_workflow(rf.workflow, best.tree) %>%
-  last_fit(split = data_split)
-
-model_performance(rf.fit)
-
-# importance of each variable
-extract_workflow(rf.fit) %>% 
-  extract_fit_parsnip() %>% 
-  vip()
-```
-
-## Support Vector Machine (SVM)
-
-We use the support vector machine model to predict the epilepsy status of the dogs. We use the `kernlab` engine with the radial basis function kernel. We use 10-fold cross-validation repeated 10 times to tune the hyperparameters. The best model is selected based on the accuracy metric.
-
-```{r}
-# set up model
-svm.model <- svm_rbf(cost = tune(), rbf_sigma = tune()) %>% 
-  set_engine("kernlab") %>%
-  set_mode("classification")
-
-
-# Workflow
-svm.workflow <- workflow() %>%
-  add_model(svm.model) %>%
-  add_recipe(Recipe)
-
-# Tuning grid
-svm.grid <- grid_regular(cost(),
-                         rbf_sigma(),
-                         levels = c(cost = 10, rbf_sigma = 10))
-
-# Hyperparameter tuning
-svm.tunning <- svm.workflow %>%
-  tune_grid(
-    resamples = group_vfold_cv(train_data, group = 'Household', v = 10, repeats = 10),
-    grid = svm.grid,
-    control = control_grid(save_pred = TRUE)
-  )
-
-# Select best hyperparameters
-best.svm <- svm.tunning %>% select_best(metric = "accuracy")
-
-svm.fit <- finalize_workflow(svm.workflow, best.svm) %>%
-  last_fit(split = data_split)
-
-model_performance(svm.fit)
-```
-
-# Epilepsy Prediction with Reduced Dimension Data
-
-In the previous section, we used metadata and around 300 ASVs to predict the epilepsy. This high number of predictor could lead to a "curse of dimensionality" problem. Here we use the PCoA reduced dimension data to predict the epilepsy status of the dogs.
-
-## PCoA
-
-Here we use PCoA based on the `Bray-Curtis` distance to reduce the microbiome data from 322 ASVs to 30 PCoA vectors. We use the first 30 vectors to predict the epilepsy status of the dogs.
-
-```{r}
-pcoa <- readRDS(here('data','following_study','ps_rarefied.rds')) %>% 
-  filter_taxa(function(x) sum(x > 0)/length(x) > 0.1, prune = TRUE) %>% 
+pcoa <- ps.rare %>% 
   ordinate(method = 'PCoA', distance = 'bray')
 plot_scree(pcoa)
-n.vecter <- 30
+n.vecter <- 45
 pcoa$values$Cum_corr_eig[n.vecter]
 ```
 
-## Data Preprocessing
+# Model Training and Testing
 
-Here we use the first 30 PCoA vectors to predict the epilepsy status of the dogs. Similar to what we did in the previous section, we use 70% data for training and 30% for testing. Variables with nearly zero variance are removed, and the nominal variables are converted to dummy variables. The age and PCoA data are normalized.
+All model training script are stored in `code/machine-learning-models` folder. 
 
-```{r}
-reduced.data <- bind_cols(sam, pcoa$vectors[,1:n.vecter])
-# Split data
-data_split <- group_initial_split(reduced.data, group = 'Household', prop = 0.7)
-train_data <- training(data_split)
-test_data <- testing(data_split)
+All model performance results are stored in `data/following_study/ml-performance` folder.
 
-# Recipe
-Recipe <- recipe(Epileptic.or.Control ~ ., data = train_data) %>%
-  update_role(Household, new_role = 'group variable') %>%
-  step_nzv(all_predictors()) %>%
-  step_dummy(all_nominal_predictors()) %>%
-  step_normalize(Age..months.)
-Recipe
-```
-
-## Logistic Regression
-
-We use the logistic regression model to predict the epilepsy status of the dogs. We use the `glmnet` engine with elastic net regularization. We use 10-fold cross-validation repeated 10 times to tune the hyperparameters. The best model is selected based on the accuracy metric.
+# Results
 
 ```{r}
-# Model 
-log.model <- logistic_reg(penalty = tune(), mixture = tune()) %>%
-  set_mode('classification') %>% 
-  set_engine("glmnet")
-
-# Workflow
-log.workflow <- workflow() %>%
-  add_model(log.model) %>%
-  add_recipe(Recipe)
-
-# Grid
-log.grid <- grid_regular(penalty(), mixture(),
-                         levels = c(penalty = 10, mixture = 10))
-
-# Hyperparameter tuning
-log.tunning <- log.workflow %>%
-  tune_grid(
-    resamples = group_vfold_cv(train_data, group = 'Household', v = 10, repeats = 10),
-    grid = log.grid,
-    control = control_grid(save_pred = TRUE)
-  )
-
-best.log <- log.tunning %>% select_best(metric = "accuracy")
-
-log.fit <- finalize_workflow(log.workflow, best.log) %>%
-  last_fit(split = data_split)
-
-model_performance(log.fit)
-```
-
-## Random Forest
-
-We use the random forest model to predict the epilepsy status of the dogs. We use the `ranger` engine with the impurity importance method. We use 10-fold cross-validation repeated 10 times to tune the hyperparameters. The best model is selected based on the accuracy metric.
-
-```{r}
-# Random Forest model
-rf.model <- rand_forest(mode = "classification",
-                        trees = tune(),
-                        min_n = tune(),
-                        mtry = tune()) %>%
-  set_engine("ranger", importance = "impurity") %>%
-  set_mode("classification")
-
-
-# Workflow
-rf.workflow <- workflow() %>%
-  add_model(rf.model) %>%
-  add_recipe(Recipe)
-
-rf.cv <- group_vfold_cv(train_data, group = 'Household', v = 10, repeats = 10)
-
-# Tuning grid
-rf.grid <- grid_regular(trees(range = c(50, 150)),
-                            min_n(range = c(5, 30)),
-                            mtry(range = c(floor(sqrt(ncol(train_data))), ceiling(2*sqrt(ncol(train_data))))),
-                            levels = 10)
-
-# Hyperparameter tuning
-rf.tunning <- rf.workflow %>%
-  tune_grid(
-    resamples = rf.cv,
-    grid = rf.grid,
-    control = control_grid(save_pred = TRUE)
-  )
-
-# Select best hyperparameters
-best.tree <- rf.tunning %>% select_best(metric = "accuracy")
-
-# Fit final model
-rf.fit <- finalize_workflow(rf.workflow, best.tree) %>%
-  last_fit(split = data_split)
-
-model_performance(rf.fit)
-
-# importance of each variable
-extract_workflow(rf.fit) %>% 
-  extract_fit_parsnip() %>% 
-  vip()
-```
-
-## Support Vector Machine (SVM)
-
-We use the support vector machine model to predict the epilepsy status of the dogs. We use the `kernlab` engine with the radial basis function kernel. We use 10-fold cross-validation repeated 10 times to tune the hyperparameters. The best model is selected based on the accuracy metric.
-
-```{r}
-# set up model
-svm.model <- svm_rbf(cost = tune(), rbf_sigma = tune()) %>% 
-  set_engine("kernlab") %>%
-  set_mode("classification")
-
-
-# Workflow
-svm.workflow <- workflow() %>%
-  add_model(svm.model) %>%
-  add_recipe(Recipe)
-
-# Tuning grid
-svm.grid <- grid_regular(cost(),
-                         rbf_sigma(),
-                         levels = c(cost = 10, rbf_sigma = 10))
-
-# Hyperparameter tuning
-svm.tunning <- svm.workflow %>%
-  tune_grid(
-    resamples = group_vfold_cv(train_data, group = 'Household', v = 10, repeats = 10),
-    grid = svm.grid,
-    control = control_grid(save_pred = TRUE)
-  )
-
-# Select best hyperparameters
-best.svm <- svm.tunning %>% select_best(metric = "accuracy")
-
-svm.fit <- finalize_workflow(svm.workflow, best.svm) %>%
-  last_fit(split = data_split)
-
-model_performance(svm.fit)
+model.performance <- list.files(here('data', 'following_study', 'ml-performance'),
+                                pattern = '.csv', 
+                                full.names = TRUE) %>% map_dfr(read.csv)
 ```
 
 
+```{r}
+model.performance %>% 
+  ggplot(aes(x = data, y = accuracy, fill = data)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.2, alpha = 0.5) +
+  labs(x = 'Data', y = 'Accuracy') +
+  theme(legend.position = 'none')
+```
+
+```{r}
+model.performance.summary <- model.performance %>% 
+  group_by(method, data) %>% 
+  summarise(mean = mean(accuracy), sd = sd(accuracy)) 
+model.performance.summary
+
+anova(lm(accuracy ~ data, data = model.performance))
+```
 
