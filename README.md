@@ -13,5 +13,5 @@
 3. ASV sharing intra&inter households: [ASV-sharing.html](https://yixuan39.github.io/CanineEpilepsy2/code/ASV-sharing.html) 
 4. Explore Collinsella: [Collinsella.html](https://yixuan39.github.io/CanineEpilepsy2/code/Collinsella.html) 
 
-![](https://github.com/Yixuan39/CanineEpilepsy2/blob/main/figures/abundance_phylum.png)
+![](https://github.com/Yixuan39/CanineEpilepsy2/blob/main/figures/Figure1.png)
 Data compositions are similar between the pilot and the following study.
