@@ -1553,41 +1553,15 @@ names(seqs) &lt;- taxa_names(ps)
 ps &lt;- merge_phyloseq(ps, seqs)
 taxa_names(ps) &lt;- paste0(&quot;ASV&quot;, seq(ntaxa(ps))) </code></pre>
 </div>
-<div id="rarefied-data" class="section level1">
-<h1>Rarefied Data</h1>
-<p>The sequencing depth for each sample is different, we need to check
-and bring them to the same level.</p>
-<pre class="r"><code># check distribution of sequencing depth
-sample_sums(ps) %&gt;% sort() %&gt;% head()</code></pre>
-<pre><code>##    020Petey   018Oakley    015Eames     019Jojo 016Fernando   022Archie 
-##          38       16683       25228       25996       32452       36256</code></pre>
-<p>Here we see <code>020Petey</code> has very low sequencing depth, we
-will remove the pair and rarefy the data to 16683.</p>
-<pre class="r"><code>sample_data(ps)[&#39;020Petey&#39;, &#39;Household&#39;]</code></pre>
-<pre><code>##          Household
-## 020Petey        10</code></pre>
-<pre class="r"><code>ps &lt;- subset_samples(ps, Household != &#39;10&#39;)</code></pre>
-<pre class="r"><code># make read depth even
-ps.rarefied &lt;- rarefy_even_depth(ps, sample.size = 16683)</code></pre>
-</div>
 <div id="save-the-phyloseq-object" class="section level1">
 <h1>Save the phyloseq object</h1>
-<p>non-rarefied data</p>
 <pre class="r"><code>ps</code></pre>
 <pre><code>## phyloseq-class experiment-level object
-## otu_table()   OTU Table:         [ 655 taxa and 26 samples ]
-## sample_data() Sample Data:       [ 26 samples by 18 sample variables ]
+## otu_table()   OTU Table:         [ 655 taxa and 28 samples ]
+## sample_data() Sample Data:       [ 28 samples by 18 sample variables ]
 ## tax_table()   Taxonomy Table:    [ 655 taxa by 7 taxonomic ranks ]
 ## refseq()      DNAStringSet:      [ 655 reference sequences ]</code></pre>
-<p>rarefied data</p>
-<pre class="r"><code>ps.rarefied</code></pre>
-<pre><code>## phyloseq-class experiment-level object
-## otu_table()   OTU Table:         [ 583 taxa and 26 samples ]
-## sample_data() Sample Data:       [ 26 samples by 18 sample variables ]
-## tax_table()   Taxonomy Table:    [ 583 taxa by 7 taxonomic ranks ]
-## refseq()      DNAStringSet:      [ 583 reference sequences ]</code></pre>
-<pre class="r"><code>saveRDS(ps, file = here(&#39;data&#39;,&#39;pilot_study&#39;,&#39;ps.rds&#39;))
-saveRDS(ps.rarefied, file = here(&#39;data&#39;,&#39;pilot_study&#39;,&#39;ps_rarefied.rds&#39;))</code></pre>
+<pre class="r"><code>saveRDS(ps, file = here(&#39;data&#39;,&#39;pilot_study&#39;,&#39;ps.rds&#39;))</code></pre>
 </div>
 
 
