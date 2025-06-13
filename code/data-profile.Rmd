@@ -29,9 +29,11 @@ ps.pilot <- read_rds(here('data','pilot_study','ps.rds'))
 sam <- data.frame(sample_data(ps))
 ```
 
-# Data Profile
+# Basic information
 
-Check frequency of breed group between health condition and perform chi-square and proportion test
+Check basic information of the current study.
+
+Does breed groups of dogs evenly distributed between IE and control group?
 
 ```{r}
 tb <- sam %>% 
@@ -39,11 +41,19 @@ tb <- sam %>%
   xtabs(~Breed.Group..1. + Epileptic.or.Control, data = .)
 tb
 chisq.test(tb)
-prop.test(tb)
 ```
 
+Get distribution of age between IE and control dogs.
 
-Check frequency of sex between health condition and perform chi-square and proportion test
+```{r}
+sam %>% 
+  group_by(Epileptic.or.Control) %>% 
+  summarise(mean= mean(Age..months.), `standard deviation` = sd(Age..months.))
+
+t.test(Age..months. ~ Epileptic.or.Control, data = sam)
+```
+
+Does sex of dogs evenly distributed between IE and control group?
 
 ```{r}
 tb <- xtabs(~Sex + Epileptic.or.Control, data = sam)
@@ -51,7 +61,7 @@ tb
 chisq.test(tb)
 ```
 
-Check frequency of Phenobarbital Administration between health condition and perform chi-square and proportion test
+Distribution of phenobarbital administration in IE dogs
 
 ```{r}
 tb <- xtabs(~Pheno.Y.N + Epileptic.or.Control, data = sam)
@@ -68,17 +78,11 @@ tb
 chisq.test(tb)
 ```
 
-Get distribution of Dogs age in month
+# Taxonomy Composition between the Pilot and Current Study
 
-```{r}
-sam %>% 
-  group_by(Epileptic.or.Control) %>% 
-  summarise(mean= mean(Age..months.), `standard deviation` = sd(Age..months.))
-```
+## Bar plot
 
-# 16S rRNA Sequencing Profile
-
-Double-check if microbial pattern is consistent with health condition. Here we draw the abundance plot by Phylum
+16S rRNA sequencing taxonomy composition between pilot and current studies at phylum level.
 
 ```{r}
 ps.all <- merge_phyloseq(ps, ps.pilot) %>% 
@@ -88,10 +92,7 @@ ps.all <- merge_phyloseq(ps, ps.pilot) %>%
 ps.all$Phylum <- as.character(ps.all$Phylum)
 ps.all$Phylum[ps.all$Abundance < 0.01] <- 'Others'
 ps.all$study <- factor(ps.all$study, levels = c('pilot', 'present'))
-```
 
-
-```{r}
 ggplot(data = ps.all) + 
   geom_col(aes(Sample, Abundance, fill = Phylum),position = "fill", width = 1) +
   theme(axis.text.x=element_blank(),
@@ -99,8 +100,10 @@ ggplot(data = ps.all) +
   scale_y_continuous(labels = scales::percent) +
   facet_grid(. ~ study, scales="free_x", space="free_x") +
   labs(y = 'Relative Abundance', x = 'Sample', fill = 'Phylum')
-ggsave(here('figures','abundance_phylum.png'), width = 6, height = 4)
+ggsave(here('figures','Figure1.png'))
 ```
+
+## Taxonomy distribution at phylum level
 
 ```{r}
 phylum.composition <- ps.all %>% 
@@ -111,11 +114,30 @@ phylum.composition <- ps.all %>%
            arrange(desc(Abundance)) %>% 
            pivot_wider(names_from = Phylum, values_from = Abundance, values_fill = 0))
 phylum.composition %>% head()
-```
 
-```{r}
 phylum.composition %>% lapply(summary)
 ```
+
+## Taxonomy distribution at genus level
+
+### Actinobacteriota
+
+Pilot study
+
+```{r}
+genus.ps <- ps.pilot %>% subset_taxa(Phylum == 'Actinobacteriota') %>% 
+  transform_sample_counts(function(x) x / sum(x)) %>% 
+  psmelt()
+genus.ps$Genus[genus.ps$Abundance < 0.01] <- 'Others'
+genus.ps %>% 
+  group_by(Sample, Genus) %>% 
+  summarise(Abundance = sum(Abundance), .groups = 'drop') %>% 
+  group_by(Genus) %>% 
+  summarise(mean = sum(Abundance)/26, `standard deviation` = sd(Abundance)) %>% 
+  arrange(desc(mean))
+```
+
+Current study
 
 ```{r}
 genus.ps <- ps %>% subset_taxa(Phylum == 'Actinobacteriota') %>% 
@@ -129,6 +151,25 @@ genus.ps %>%
   summarise(mean = sum(Abundance)/98, `standard deviation` = sd(Abundance)) %>% 
   arrange(desc(mean))
 ```
+
+### Firmicutes
+
+Pilot study
+
+```{r}
+genus.ps <- ps.pilot %>% subset_taxa(Phylum == 'Firmicutes') %>% 
+  transform_sample_counts(function(x) x / sum(x)) %>% 
+  psmelt()
+genus.ps$Genus[genus.ps$Abundance < 0.01] <- 'Others'
+genus.ps %>% 
+  group_by(Sample, Genus) %>% 
+  summarise(Abundance = sum(Abundance), .groups = 'drop') %>% 
+  group_by(Genus) %>% 
+  summarise(mean = sum(Abundance)/26, `standard deviation` = sd(Abundance)) %>% 
+  arrange(desc(mean))
+```
+
+Current study
 
 ```{r}
 genus.ps <- ps %>% subset_taxa(Phylum == 'Firmicutes') %>% 

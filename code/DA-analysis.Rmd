@@ -41,7 +41,7 @@ Before the DA analysis, we want to filter the data by prevlence and minimum read
 
 ```{r} 
 # test for filtering threshold
-test.filter <- function(ps, prevlence, min_read = 50) {
+test.filter <- function(ps, prevlence, min_read = 0) {
     sub.ps <- ps %>%
       filter_taxa(function(x) sum(x)>min_read & sum(x>0)/length(x) >= prevlence, prune = TRUE)
     retained.read <- otu_table(sub.ps) %>% rowSums() %>% mean()
@@ -61,12 +61,12 @@ ggplot(trace, aes(x = average.read.depth, y = taxon_size)) +
     ylab('percentage of ASV remained') 
 ```
 
-By setting the minimum prevalence to 0.1 and minimum read depth of 50, we kept 13% ASVs with 96% reads remained.
+By setting the minimum prevalence to 0.1 and minimum read depth of 100, we kept 13% ASVs with 96% reads remained.
 
 ```{r} 
 head(trace)
 keep <- ps %>% 
-  filter_taxa(function(x) sum(x)>100 & sum(x>0)/length(x)>0.1, prune = TRUE) %>%
+  filter_taxa(function(x) sum(x>0)/length(x)>0.1, prune = TRUE) %>%
   tax_table() %>% rownames()
 ```
 
@@ -193,7 +193,7 @@ linda.test %>% arrange(str_rank(taxon, numeric = TRUE)) %>% head()
 ## pairwise T-test on rarefied data
 
 ```{r}
-paired.t.test <- function(data) {
+paired.t.test <- function(data, pseudo.count = 0.5) {
     splited.data <- data %>% 
         arrange(Household, Epileptic.or.Control) %>% 
         split(.$Epileptic.or.Control)
@@ -201,7 +201,7 @@ paired.t.test <- function(data) {
                             splited.data[['Control']]$Abundance,
                             paired = TRUE, alternative = 'two.sided')
     data.frame(taxon = unique(data$OTU),
-               LFC = log2(mean(splited.data[['Epileptic']]$Abundance + 0.5)) - log2(mean(splited.data[['Control']]$Abundance + 0.5)),
+               LFC = mean(log2(splited.data[['Epileptic']]$Abundance + pseudo.count) - log2(splited.data[['Control']]$Abundance + pseudo.count)),
                p.value = t.test.result$p.value)
 }
 
@@ -219,12 +219,12 @@ pairwise.t.test %>% arrange(str_rank(taxon, numeric = TRUE)) %>% head()
 Here we compare the results of different methods. We first show the top 10 ASVs with the smallest p-value for each method.
 
 ```{r}
-test.results <- list("ALDEx2 t test" = aldex.t.test,
+test.results <- list("ALDEx2 t-test" = aldex.t.test,
                      "ALDEx2 GLM" = aldex.glm.test,
                      "ANCOM-BC" = ancombc.test,
                      "corncob" = corncob.test,
                      "LinDA" = linda.test, 
-                     "paired t test" = pairwise.t.test) %>% 
+                     "paired t-test" = pairwise.t.test) %>% 
     bind_rows(.id = 'method') %>% 
     group_by(method) %>% arrange(str_rank(taxon, numeric = TRUE)) %>% ungroup()
 
@@ -239,7 +239,7 @@ p.value.tb <- test.results %>%
     rowwise() %>%
     mutate(SignificantCount = sum(c_across(-taxon) < alpha))
 
-top.p <- p.value.tb %>%
+top.p <- p.value.tb %>% 
     left_join(tax,., by = 'taxon') %>% 
     group_by(SignificantCount) %>% 
     arrange(str_rank(taxon, numeric = TRUE), .by_group = TRUE) %>%
@@ -251,9 +251,11 @@ tb <- top.p %>%
     head(10) %>% 
     gt() %>% 
     fmt_number(decimals = 4) %>% 
-    data_color(columns = colnames(top.p)[4:9],
-               colors = scales::col_bin(palette = c(scales::hue_pal()(1), "transparent"),
-                                        bins = c(-Inf, 0.05, Inf)))
+    tab_style_body(
+    columns = where(is.numeric),
+    style = cell_text(weight = "bold"),
+    fn = function(x) x <= alpha
+  )
 tb
 ```
 
@@ -307,14 +309,29 @@ cor.plot <- top.p %>%
     dplyr::select(-c(Phylum, Genus)) %>%
     column_to_rownames('taxon') %>%
     cor() %>%
-    ggcorrplot(lab = TRUE, type = 'lower', show.legend = FALSE, tl.cex = 10)
+    ggcorrplot(lab = TRUE,
+               lab_size = 3,
+               type = 'lower',
+               show.diag = TRUE, 
+               show.legend = FALSE,
+               tl.cex = 10)
 cor.plot
 ```
 
 ```{r include=FALSE}
 library(patchwork)
 cor.plot + effect.plot + plot_annotation(tag_levels = 'a')
-ggsave(here('figures', 'DA-analysis1.png'), width = 8, height = 4.5)
+ggsave(here('figures', 'Figure4.png'), width = 8, height = 4.5)
+```
+
+Volcano plots
+
+```{r}
+test.results %>% 
+  filter(method != 'corncob') %>%
+  ggplot() +
+  geom_point(aes(x = LFC, y = -log10(p.value))) +
+  facet_wrap(~method, scales = 'free')
 ```
 
 

@@ -31,7 +31,7 @@ ps.rare <- readRDS(here('data','following_study','ps_rarefied.rds')) %>%
 
 # Start
 
-In this section, we want to try to use machine learning models to predict the epilepsy status of the dogs based on their microbiome data. Here we are using the rarefied data with each taxa has at least 10% prevalence in our data. According to previous findings, we choose to use sex, age, and microbiome information to predict the epilepsy status of the dogs.
+In this section, we want to try to use machine learning models to predict the epilepsy status of the dogs based on their microbiome data. Here we are using the rarefied data with each taxa has at least 10% prevalence in our data. 
 
 Prediction accuracy is not only affected by the model but also by the structure of the data. We used three common models in microbial study: logistic regression, random forest, and support vector machine. 
 
@@ -52,16 +52,13 @@ We used 70% data to train models and 30% data for testing. All models are traine
 ```{r}
 ps.rare.asv <- ps.rare
 sam <- data.frame(sample_data(ps.rare.asv)) %>% 
-    dplyr::select(Age..months., Sex, Epileptic.or.Control, Household)
+    dplyr::select(Epileptic.or.Control, Household)
 otu <- data.frame(otu_table(ps.rare.asv))
 # combine data to a data frame
 ps.data <- bind_cols(sam, otu)
 data_split <- group_initial_split(ps.data, group = 'Household', prop = 0.7)
 Recipe <- recipe(Epileptic.or.Control ~ ., data = training(data_split)) %>%
-        update_role(Household, new_role = 'group variable') %>%
-        step_nzv(all_predictors()) %>%
-        step_dummy(all_nominal_predictors()) %>%
-        step_normalize(Age..months., starts_with('ASV'))
+        update_role(Household, new_role = 'group variable')
 Recipe
 ```
 
@@ -71,16 +68,13 @@ Recipe
 ps.rare.phylum <- ps.rare  %>% 
     tax_glom(taxrank = 'Phylum')
 sam <- data.frame(sample_data(ps.rare.phylum)) %>% 
-    dplyr::select(Age..months., Sex, Epileptic.or.Control, Household)
+    dplyr::select(Epileptic.or.Control, Household)
 otu <- data.frame(otu_table(ps.rare.phylum))
 # combine data to a data frame
 ps.data <- bind_cols(sam, otu)
 data_split <- group_initial_split(ps.data, group = 'Household', prop = 0.7)
 Recipe <- recipe(Epileptic.or.Control ~ ., data = training(data_split)) %>%
-        update_role(Household, new_role = 'group variable') %>%
-        step_nzv(all_predictors()) %>%
-        step_dummy(all_nominal_predictors()) %>%
-        step_normalize(Age..months., starts_with('ASV'))
+        update_role(Household, new_role = 'group variable') 
 Recipe
 ```
 
@@ -90,7 +84,7 @@ Recipe
 pcoa <- ps.rare %>% 
   ordinate(method = 'PCoA', distance = 'bray')
 plot_scree(pcoa)
-n.vecter <- 45
+n.vecter <- 30
 pcoa$values$Cum_corr_eig[n.vecter]
 ```
 
@@ -116,6 +110,7 @@ model.performance %>%
   geom_jitter(width = 0.2, alpha = 0.5) +
   labs(x = 'Data', y = 'Accuracy') +
   theme(legend.position = 'none')
+ggsave(here('figures', 'Figure6.png'))
 ```
 
 ```{r}
@@ -126,4 +121,5 @@ model.performance.summary
 
 anova(lm(accuracy ~ data, data = model.performance))
 ```
+
 

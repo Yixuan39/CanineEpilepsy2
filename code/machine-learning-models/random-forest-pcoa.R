@@ -15,10 +15,10 @@ ps.rare <- readRDS(here('data','following_study','ps_rarefied.rds')) %>%
 
 pcoa <- ps.rare %>% 
     ordinate(method = 'PCoA', distance = 'bray')
-n.vecter <- 45
+n.vecter <- 30
 
 sam <- data.frame(sample_data(ps.rare)) %>% 
-    dplyr::select(Age..months., Sex, Epileptic.or.Control, Household)
+    dplyr::select(Epileptic.or.Control, Household)
 
 # combine data to a data frame
 ps.data <- bind_cols(sam, pcoa$vectors[,1:n.vecter])
@@ -33,10 +33,7 @@ for (i in 1:30) {
     
     # Recipe
     Recipe <- recipe(Epileptic.or.Control ~ ., data = train_data) %>%
-        update_role(Household, new_role = 'group variable') %>%
-        step_nzv(all_predictors()) %>%
-        step_dummy(all_nominal_predictors()) %>%
-        step_normalize(Age..months.)
+        update_role(Household, new_role = 'group variable')
     
     # Random Forest model
     rf.model <- rand_forest(mode = "classification",

@@ -10,10 +10,11 @@ plan(multisession)
 theme_set(theme_bw())
 # load data
 ps.rare <- readRDS(here('data','following_study','ps_rarefied.rds')) %>% 
-    filter_taxa(function(x) sum(x > 0)/length(x) > 0.1, prune = TRUE)
+    filter_taxa(function(x) sum(x > 0)/length(x) > 0.1, prune = TRUE) %>% 
+    transform_sample_counts(function(x) x / sum(x))
 
 sam <- data.frame(sample_data(ps.rare)) %>% 
-    dplyr::select(Age..months., Sex, Epileptic.or.Control, Household)
+    dplyr::select(Epileptic.or.Control, Household)
 otu <- data.frame(otu_table(ps.rare))
 
 # combine data to a data frame
@@ -30,10 +31,7 @@ for (i in 1:30) {
     
     # Recipe
     Recipe <- recipe(Epileptic.or.Control ~ ., data = train_data) %>%
-        update_role(Household, new_role = 'group variable') %>%
-        step_nzv(all_predictors()) %>%
-        step_dummy(all_nominal_predictors()) %>%
-        step_normalize(Age..months., starts_with('ASV'))
+        update_role(Household, new_role = 'group variable')
     
     # Random Forest model
     rf.model <- rand_forest(mode = "classification",

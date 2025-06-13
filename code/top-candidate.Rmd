@@ -1,0 +1,291 @@
+---
+title: "Analyze Collinsella"
+author: "Yixuan Yang"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set Up
+
+```{r message=FALSE}
+rm(list = ls())
+set.seed(2024)
+library(tidyverse)
+library(here)
+library(rstatix)
+library(phyloseq)
+library(gt)
+library(broom)
+theme_set(theme_bw())
+
+ps.rare <- readRDS(here('data','following_study','ps_rarefied.rds'))
+```
+
+
+# Collinsella
+
+In DA analyses section, we found one `Collinsella` ASV that was consistently identified differentially abundant by all DA methods.
+
+## Differential Abundance
+
+The log2 fold difference in relative abundance between IE and control dogs from the same household for the five most abundant Collinsella ASVs and total Collinsella. Absent bars indicate that the Collinsella ASV was not detected in either dog in that household.
+
+```{r warning=FALSE}
+ps.collinsella <- ps.rare %>%
+    subset_taxa(Genus == 'Collinsella') 
+genus.collinsella <- ps.collinsella %>% 
+    tax_glom('Genus') %>% 
+    otu_table() %>% data.frame() %>% 
+    rename(Collinsella = ASV2)
+
+# add genus level collinsella count to otu table
+collinsella.df <- ps.collinsella %>% 
+    filter_taxa(function(x) sum(x>0)/length(x)>=0.1, prune = TRUE) %>%  # filter out taxa with prevalence lower than 10%
+    otu_table() %>% 
+    cbind(genus.collinsella) %>%
+    cbind(data.frame(sample_data(ps.collinsella))) %>% 
+    pivot_longer(c(starts_with('ASV'), 'Collinsella'), names_to = 'ASV', values_to = 'Abundance')
+
+
+lfc <- collinsella.df %>%
+    group_by(Household, ASV) %>%
+    summarise(LFC = log2(Abundance[Epileptic.or.Control == "Epileptic"] + 0.5) -
+                  log2(Abundance[Epileptic.or.Control == "Control"] + 0.5),
+              .groups = 'drop')
+
+ggplot(lfc) +
+    geom_bar(aes(x = as.numeric(Household), y = LFC, fill = (LFC > 0)), stat = 'identity') +
+    facet_wrap(~ASV, scales = 'free_y') +
+    labs(x = 'Household', y = 'log 2 fold change', fill = 'LFC > 0')
+ggsave(here('figures','Figure5.png'))
+```
+
+We can visually see some ASVs are more abunant in IE group. Here, we use pairwise sign test to check.
+
+```{r}
+collinsella.df %>% 
+    group_by(ASV) %>%
+    arrange(Household) %>% # make sure data are paired
+    pairwise_sign_test(Abundance ~ Epileptic.or.Control, ref.group = 'Epileptic', alternative = 'greater', paired = TRUE) %>% gt
+```
+
+ASV2, ASV44 and the total Collinsella are significantly more abundant in IE dogs.
+
+## Chi-Square test
+
+Association between sex and the presence of Collinsella can have a confounding effect
+
+```{r}
+ftable(xtabs( ~ Sex  + sign(Abundance) + ASV, data = collinsella.df))
+```
+
+
+```{r}
+collinsella.df %>% 
+    split(.$ASV) %>% 
+    map_dfr(function(df) tidy(chisq.test(xtabs( ~ Sex  + sign(Abundance), data = df))), .id = 'ASV') %>%
+    gt %>% fmt_number(decimals = 3)
+```
+
+Presence of ASV79 is associated with sex.
+
+## Abundance Change Across other factors
+
+### Age
+
+Does the abundance of Collinsella different by age?
+
+```{r}
+collinsella.df %>% 
+    split(.$ASV) %>% 
+    map_dfr(function(df) tidy(lm(Abundance ~ Age..months., data = df)), .id = 'ASV') %>% 
+    group_by(ASV) %>% gt %>% fmt_number(decimals = 3)
+```
+
+The abundance of ASV83 was significantly higher in older dogs.
+
+### Seizure Freedom/Seizure Control
+
+Does the abundance of Collinsella change by seizure freedom or seizure controlled dogs?
+
+```{r}
+collinsella.df %>% 
+    filter(Epileptic.or.Control == 'Epileptic') %>%
+    split(.$ASV) %>%
+    map_dfr(function(df) tidy(t.test(Abundance ~ Seizure.Freedom..Y.N., data = df)), .id = 'ASV') %>%
+    gt %>% fmt_number(decimals = 3)
+```
+
+```{r}
+collinsella.df %>% 
+    filter(Epileptic.or.Control == 'Epileptic') %>%
+    split(.$ASV) %>%
+    map_dfr(function(df) tidy(t.test(Abundance ~ Seizure.Control..Satisfactory.Unsatisfactory., data = df)), .id = 'ASV') %>%
+    gt %>% fmt_number(decimals = 3)
+```
+
+none of the Collinsella ASV were found to be significantly differentially abundant between seizure free or seizure controlled dogs.
+
+# Lactobacillus
+
+Lactobacillus has attracted growing attention for its potential beneficial role in epilepsy.
+
+## Differential Abundance
+
+```{r warning=FALSE}
+ps.lactobacillus <- ps.rare %>%
+    subset_taxa(Genus == 'Lactobacillus') 
+genus.lactobacillus <- ps.lactobacillus %>% 
+    tax_glom('Genus') %>% 
+    otu_table() %>% data.frame() %>% 
+    rename(Lactobacillus = ASV55)
+
+# add genus level lactobacillus count to otu table
+lactobacillus.df <- ps.lactobacillus %>% 
+    filter_taxa(function(x) sum(x>0)/length(x)>=0.1, prune = TRUE) %>%  # filter out taxa with prevalence lower than 10%
+    otu_table() %>% 
+    cbind(genus.lactobacillus) %>%
+    cbind(data.frame(sample_data(ps.lactobacillus))) %>% 
+    pivot_longer(c(starts_with('ASV'), 'Lactobacillus'), names_to = 'ASV', values_to = 'Abundance')
+
+
+lfc <- lactobacillus.df %>%
+    group_by(Household, ASV) %>%
+    summarise(LFC = log2(Abundance[Epileptic.or.Control == "Epileptic"] + 1) -
+                  log2(Abundance[Epileptic.or.Control == "Control"] + 1),
+              .groups = 'drop')
+
+ggplot(lfc) +
+    geom_bar(aes(x = as.numeric(Household), y = LFC, fill = (LFC > 0)), stat = 'identity') +
+    facet_wrap(~ASV, scales = 'free_y') +
+    labs(x = 'Household', y = 'log 2 fold change', fill = 'LFC > 0')
+```
+
+
+```{r}
+lactobacillus.df  %>% 
+    group_by(ASV) %>%
+    arrange(Household) %>% # make sure data are paired
+    pairwise_sign_test(Abundance ~ Epileptic.or.Control, ref.group = 'Epileptic', alternative = 'greater', paired = TRUE) %>% gt
+```
+
+ASV906 is significantly more abundant in epileptic dogs
+
+## Chi-Square Test
+
+Does the presense of Lactobacillus associated with sex?
+
+```{r}
+ftable(xtabs(sign(Abundance) ~ Sex + Epileptic.or.Control + ASV, data = lactobacillus.df))
+```
+
+```{r}
+lactobacillus.df %>% 
+    split(.$ASV) %>% 
+    map_dfr(function(df) tidy(chisq.test(xtabs( ~ Sex  + sign(Abundance), data = df))), .id = 'ASV') %>%
+    gt %>% fmt_number(decimals = 3)
+```
+
+ASV906 is marginally significant
+
+## Abundance Change
+
+### Age
+
+Does the abundance change by age?
+
+```{r warning=FALSE}
+lactobacillus.df %>% 
+    split(.$ASV) %>% 
+    map_dfr(function(df) tidy(lm(Abundance ~ Age..months., data = df)), .id = 'ASV') %>% 
+    group_by(ASV) %>% gt %>% fmt_number(decimals = 3)
+```
+
+ASV55 and the total Lactobacillus abundance is significantly more abundant in epileptic dogs.
+
+## Seizure Free / Seizure Control
+
+Does abundance change by these groups?
+
+```{r warning=FALSE}
+lactobacillus.df %>% 
+    filter(Epileptic.or.Control == 'Epileptic') %>%
+    split(.$ASV) %>%
+    map_dfr(function(df) tidy(t.test(Abundance ~ Seizure.Freedom..Y.N., data = df)), .id = 'ASV') %>%
+    gt %>% fmt_number(decimals = 3)
+```
+
+
+```{r}
+lactobacillus.df %>% 
+    filter(Epileptic.or.Control == 'Epileptic') %>%
+    split(.$ASV) %>%
+    map_dfr(function(df) tidy(t.test(Abundance ~ Seizure.Control..Satisfactory.Unsatisfactory., data = df)), .id = 'ASV') %>%
+    gt %>% fmt_number(decimals = 3)
+```
+
+ASV906 was marginally less abundant in IE dogs that are seizure controlled
+
+# More Information
+
+## Prevalence
+
+```{r}
+prev <- ps.rare %>%
+    filter_taxa(function(x) sum(x>0)/length(x)>=0.1, prune = TRUE) %>% 
+    psmelt() %>% 
+    filter(Genus %in% c('Collinsella', 'Lactobacillus')) %>%
+    group_by(OTU, Genus) %>%
+    summarise(Frequency = sum(Abundance > 0),
+              Prevalence = sum(Abundance > 0) / n()) %>% 
+    arrange(Genus)
+prev
+
+ps.rare %>%
+    tax_glom('Genus') %>% 
+    psmelt() %>% 
+    filter(Genus %in% c('Collinsella', 'Lactobacillus')) %>%
+    group_by(OTU, Genus) %>%
+    summarise(Frequency = sum(Abundance > 0),
+              Prevalence = sum(Abundance > 0) / n()) %>% 
+    arrange(Genus)
+```
+
+## Taxonomy
+
+```{r}
+tax_table(ps.rare)[prev$OTU, c('Genus','Species')]
+```
+
+Some of the species were not identified. We can use blast to search against the nt/nr database and get their percentage identity.
+
+```{r}
+# extract sequence of these ASVs
+refseq(ps.rare)[prev$OTU] %>% dada2:::pfasta(ids = prev$OTU)
+```
+
+Here's the result:
+
+| taxon | species | identity |
+|:------|:--------|:---------|
+| ASV2 | Collinsella stercoris | 100% |
+| ASV44 | Collinsella aerofaciens | 100% |
+| ASV70 | Collinsella tanakaei | 100% |
+| ASV79 | Collinsella tanakaei | 98.81% |
+| ASV83 | Collinsella phocaeensis | 100% |
+| ASV105 | Lactobacillus gasseri | 100% |
+| ASV55 | Lactobacillus crispatus | 100% |
+| ASV906 | Lactobacillus amylovorus | 100% |
+
+
+```{r}
+sessioninfo::session_info()
+```
+

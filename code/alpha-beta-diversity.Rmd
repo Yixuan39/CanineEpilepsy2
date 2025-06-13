@@ -78,7 +78,13 @@ permdisp <- function(data, group, method, permutations=1e4, pairwise = FALSE, co
 
 # Start
 
-In this section, we want to estimate the effect of different factors on the microbial diversity. The factors we are focusing on are `Household`, `Epileptic.or.Control`, `Breed.Group..1.`, `Pheno.Y.N`, `Sex`, and `Age..months.`. We compare the species richness (Shannon index) among different factors using ANOVA, and compare the centroid of dissimilarity of microbial community between different groups using PERMANOVA using the Bray-Curtis and weighted Unifrac distance, and visualized using multi-dimensional scaling. PERMDISP was used to test the homogeneity of multivariate dispersions among groups.
+In this section, we want to estimate the effect of different factors on dog microbiomes. We focused on `Household`, `Epileptic.or.Control`, `Breed.Group..1.`, `Pheno.Y.N`, `Sex`, and `Age..months.`. 
+
+We compare the alpha diversity (Shannon index) among different factors using ANOVA.
+
+We compare the beta diversity of different factors using PERMANOVA using the Bray-Curtis and weighted Unifrac distance, and visualized using multi-dimensional scaling. 
+
+PERMDISP was used to test the homogeneity of multivariate dispersions among groups.
 
 # Household Effect
 
@@ -271,13 +277,13 @@ anova_test(Shannon~Household+Age..months., data = sam, type = 1)
 ### Bray-Curtis distance
 
 ```{r}
-permanova(ps.rare.prop, 'Age..months.', 'bray', strata = 'Household')
+permanova(ps.rare.prop, 'Household + Age..months.', 'bray')
 ```
 
 ### Weighted-Unifrac distance
 
 ```{r}
-permanova(ps.rare.prop, 'Age..months.', 'wunifrac')
+permanova(ps.rare.prop, 'Household + Age..months.', 'wunifrac')
 ```
 
 ```{r}

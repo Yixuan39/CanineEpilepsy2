@@ -20,6 +20,7 @@ library(readxl)
 library(here)
 library(phyloseq)
 library(DECIPHER)
+theme_set(theme_bw())
 ```
 
 # Read in metadata
@@ -52,7 +53,7 @@ meta_data <- meta_data %>%
     arrange(str_rank(Household, numeric = T), Epileptic.or.Control)
 ```
 
-Sex column contains information about reproductive status, here we separate them into two columns
+Sex column contains reproductive status. Here, separate them into two columns
 
 ```{r}
 meta_data <- meta_data %>%
@@ -72,15 +73,7 @@ Set Epileptic.or.Control as factor
 meta_data$Epileptic.or.Control <- factor(meta_data$Epileptic.or.Control, levels = c('Control','Epileptic'))
 ```
 
-# GI inflammatry information
-
-```{r}
-#meta_data <- meta_data %>% left_join(GI.inflam, by = 'Dog.Name')
-```
-
-
-
-# Create phyloseq object
+# Store Data to Phyloseq
 
 Store the metadata, sequence table, and taxonomy table into a phyloseq object
 
@@ -118,7 +111,7 @@ All of the data has more than 100 reads, but sample 40,80 and 108 have relative 
 
 # Phylogenetic Tree construction
 
-Here, we use DECIPHER package to align sequence and then construct phylogenetic tree using maximum likelihood method with `GTR+G4` model.
+With the `DECIPHER` package, use `AlignSeqs` to align sequence and then use `Treeline` to construct a phylogenetic tree. 
 
 ```{r, eval = FALSE}
 set.seed(2024)
@@ -137,7 +130,9 @@ plot_tree(ps, method = 'treeonly')
 
 # Data Cleaning
 
-Some dogs have duplicated samples. Here, we keep the one with the most reads.
+## Remove duplicated samples
+
+Some of the dog fecal samples were measured more than once. Here, we keep the one with the most reads.
 
 In household 52, sample 106,107,108 are duplicates of sample 103.
 
@@ -174,7 +169,11 @@ duplicated.samples <- c(104,106,107,108,113,115,63,116,117,118)
 ps <- subset_samples(ps, !(SampleID2 %in% duplicated.samples))
 ```
 
+## Discard samples
+
 Some of the households have more than 2 samples, we force to keep two dogs to maintain the structure of the study design.
+
+Keep epileptic and control dogs with higher read depth.
 
 ```{r}
 n.samples <- table(sample_data(ps)$Household)
@@ -278,6 +277,7 @@ if (!identical(rownames(otu_table(ps)), rownames(sample_data(ps)))) stop('sample
 if (!identical(rownames(otu_table(ps.rarefied)), rownames(sample_data(ps.rarefied)))) stop('sample names are not matched!')
 ```
 
+Save both dataset to the data folder.
 
 ```{r}
 saveRDS(ps, file = here('data','following_study','ps.rds'))
