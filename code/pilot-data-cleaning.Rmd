@@ -63,47 +63,12 @@ ps <- merge_phyloseq(ps, seqs)
 taxa_names(ps) <- paste0("ASV", seq(ntaxa(ps))) 
 ```
 
-# Rarefied Data
-
-The sequencing depth for each sample is different, we need to check and bring them to the same level.
-
-```{r}
-# check distribution of sequencing depth
-sample_sums(ps) %>% sort() %>% head()
-```
-
-Here we see `020Petey` has very low sequencing depth, we will remove the pair and rarefy the data to 16683.
-
-```{r}
-sample_data(ps)['020Petey', 'Household']
-ps <- subset_samples(ps, Household != '10')
-```
-
-
-
-```{r message=FALSE}
-# make read depth even
-ps.rarefied <- rarefy_even_depth(ps, sample.size = 16683)
-```
-
 # Save the phyloseq object
-
-non-rarefied data
 
 ```{r}
 ps
-```
 
-rarefied data
-
-```{r}
-ps.rarefied
-```
-
-
-```{r}
 saveRDS(ps, file = here('data','pilot_study','ps.rds'))
-saveRDS(ps.rarefied, file = here('data','pilot_study','ps_rarefied.rds'))
 ```
 
 
