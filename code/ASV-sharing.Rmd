@@ -182,7 +182,7 @@ df <- prevalence %>%
 
 ggplot(data = df) + 
     geom_point(aes(x = prevalence, y = share.rate), alpha = 0.3) +
-    stat_function(fun = function(x) x^2, color = "blue", linewidth = 1)  +
+    stat_function(fun = function(x) x * (98*x-1)/97, color = "blue", linewidth = 1)  +
     coord_fixed() +
     labs(x = 'Prevalence of ASV', y = 'Proportion of ASV Present in Both Dogs')
 ggsave(here('figures','Figure3.png'))
