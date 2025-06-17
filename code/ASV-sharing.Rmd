@@ -142,6 +142,7 @@ similarity %>%
     tune::coord_obs_pred() +
     labs(x = 'Similarity Between Different Household', y = 'Similarity Between Same Household')
 ggsave(here('figures','Figure2.png'))
+ggsave(here('figures','Figure2.pdf'))
 ```
 
 
@@ -186,6 +187,7 @@ ggplot(data = df) +
     coord_fixed() +
     labs(x = 'Prevalence of ASV', y = 'Proportion of ASV Present in Both Dogs')
 ggsave(here('figures','Figure3.png'))
+ggsave(here('figures','Figure3.pdf'))
 ```
 
 For ASVs with prevalence greater than 0.1, 286/322 of them were shared within a household than expected.

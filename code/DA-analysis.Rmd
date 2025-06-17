@@ -321,7 +321,8 @@ cor.plot
 ```{r include=FALSE}
 library(patchwork)
 cor.plot + effect.plot + plot_annotation(tag_levels = 'a')
-ggsave(here('figures', 'Figure4.png'), width = 8, height = 4.5)
+ggsave(here('figures', 'Figure4.png'))
+ggsave(here('figures', 'Figure4.pdf'))
 ```
 
 Volcano plots

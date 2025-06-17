@@ -101,6 +101,7 @@ ggplot(data = ps.all) +
   facet_grid(. ~ study, scales="free_x", space="free_x") +
   labs(y = 'Relative Abundance', x = 'Sample', fill = 'Phylum')
 ggsave(here('figures','Figure1.png'))
+ggsave(here('figures','Figure1.pdf'))
 ```
 
 ## Taxonomy distribution at phylum level

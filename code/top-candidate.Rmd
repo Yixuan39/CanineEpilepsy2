@@ -65,6 +65,7 @@ ggplot(lfc) +
     facet_wrap(~ASV, scales = 'free_y') +
     labs(x = 'Household', y = 'log 2 fold change', fill = 'LFC > 0')
 ggsave(here('figures','Figure5.png'))
+ggsave(here('figures','Figure5.pdf'))
 ```
 
 We can visually see some ASVs are more abunant in IE group. Here, we use pairwise sign test to check.

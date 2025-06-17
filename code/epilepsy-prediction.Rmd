@@ -111,6 +111,7 @@ model.performance %>%
   labs(x = 'Data', y = 'Accuracy') +
   theme(legend.position = 'none')
 ggsave(here('figures', 'Figure6.png'))
+ggsave(here('figures', 'Figure6.pdf'))
 ```
 
 ```{r}
