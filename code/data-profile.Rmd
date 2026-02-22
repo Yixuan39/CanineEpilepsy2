@@ -16,6 +16,7 @@ set.seed(2024)
 library(here)
 library(phyloseq)
 library(tidyverse)
+library(ggh4x)
 theme_set(theme_bw())
 ```
 
@@ -85,6 +86,11 @@ chisq.test(tb)
 16S rRNA sequencing taxonomy composition between pilot and current studies at phylum level.
 
 ```{r}
+sample_data(ps.pilot) <- sample_data(ps.pilot) |> 
+    data.frame() |> 
+    mutate(Epileptic.or.Control = if_else(Condition == 'Epilepsy',
+                                          'Epileptic', 'Control')) |> 
+    sample_data()
 ps.all <- merge_phyloseq(ps, ps.pilot) %>% 
   tax_glom('Phylum') %>% 
   transform_sample_counts(function(x) x / sum(x)) %>% # transform to proportional
@@ -92,16 +98,20 @@ ps.all <- merge_phyloseq(ps, ps.pilot) %>%
 ps.all$Phylum <- as.character(ps.all$Phylum)
 ps.all$Phylum[ps.all$Abundance < 0.01] <- 'Others'
 ps.all$study <- factor(ps.all$study, levels = c('pilot', 'present'))
+ps.all <- ps.all |> 
+    mutate(group = if_else(Epileptic.or.Control == 'Epileptic',
+                           'IE','Ctrl'))
 
 ggplot(data = ps.all) + 
   geom_col(aes(Sample, Abundance, fill = Phylum),position = "fill", width = 1) +
   theme(axis.text.x=element_blank(),
-        axis.ticks.x=element_blank())  +
+        axis.ticks.x=element_blank(),
+        panel.spacing.x = unit(0, "lines"))  +
   scale_y_continuous(labels = scales::percent) +
-  facet_grid(. ~ study, scales="free_x", space="free_x") +
+  facet_nested(. ~ study + group, scales = "free_x", space = "free_x") +
   labs(y = 'Relative Abundance', x = 'Sample', fill = 'Phylum')
-ggsave(here('figures','Figure1.png'))
-ggsave(here('figures','Figure1.pdf'))
+ggsave(here('figures','Figure1.png'), width = 170, units = "mm")
+ggsave(here('figures','Figure1.pdf'), width = 170, units = "mm")
 ```
 
 ## Taxonomy distribution at phylum level
