@@ -45,9 +45,7 @@ meta_data$`Zip Code` <- meta_data$`Zip Code` %>%
 meta_data <- meta_data %>%
   dplyr::select(-COMMENTS) %>%
   data.frame()
-# match sample name same as that in the asv table
-rownames(meta_data) <- 'Netti' %>%
-    str_c(sprintf("%03d", as.integer(meta_data$SampleID2)))
+
 meta_data <- meta_data %>% add_column(study = 'present')
 meta_data <- meta_data %>% 
     arrange(str_rank(Household, numeric = T), Epileptic.or.Control)
@@ -78,6 +76,9 @@ meta_data$Epileptic.or.Control <- factor(meta_data$Epileptic.or.Control, levels 
 Store the metadata, sequence table, and taxonomy table into a phyloseq object
 
 ```{r}
+# match sample name same as that in the asv table
+rownames(meta_data) <- 'Netti' %>%
+    str_c(sprintf("%03d", as.integer(meta_data$SampleID2)))
 st <- readRDS(here('data','following_study','st.rds')) # sequence table
 taxa <- readRDS(here('data','following_study','taxsp.rds')) # taxonomy table
 
