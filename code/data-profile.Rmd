@@ -97,7 +97,8 @@ ps.all <- merge_phyloseq(ps, ps.pilot) %>%
   psmelt()
 ps.all$Phylum <- as.character(ps.all$Phylum)
 ps.all$Phylum[ps.all$Abundance < 0.01] <- 'Others'
-ps.all$study <- factor(ps.all$study, levels = c('pilot', 'present'))
+ps.all$study <- if_else(ps.all$study == 'present', 'present study', 'pilot study')
+ps.all$study <- factor(ps.all$study, levels = c('pilot study', 'present study'))
 ps.all <- ps.all |> 
     mutate(group = if_else(Epileptic.or.Control == 'Epileptic',
                            'IE','Ctrl'))
