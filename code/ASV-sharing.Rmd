@@ -140,9 +140,9 @@ similarity %>%
     geom_point(aes(x = diff.house.sim, y = same.house.sim)) +
     geom_abline(intercept = 0, slope = 1, color = "blue", linewidth = 1) +
     tune::coord_obs_pred() +
-    labs(x = 'Similarity Between Different Household', y = 'Similarity Between Same Household')
-ggsave(here('figures','Figure2.png'))
-ggsave(here('figures','Figure2.pdf'))
+    labs(x = 'Jaccard Similarity (Different Household)', y = 'Jaccard Similarity (Same Household)')
+ggsave(here('figures','Figure2.png'), width = 170, units = "mm")
+ggsave(here('figures','Figure2.pdf'), width = 170, units = "mm")
 ```
 
 
@@ -185,9 +185,9 @@ ggplot(data = df) +
     geom_point(aes(x = prevalence, y = share.rate), alpha = 0.3) +
     stat_function(fun = function(x) x * (98*x-1)/97, color = "blue", linewidth = 1)  +
     coord_fixed() +
-    labs(x = 'Prevalence of ASV', y = 'Proportion of ASV Present in Both Dogs')
-ggsave(here('figures','Figure3.png'))
-ggsave(here('figures','Figure3.pdf'))
+    labs(x = 'Prevalence of ASV', y = 'Proportion of Household: ASV Present in Both Dogs')
+ggsave(here('figures','Figure3.png'), width = 170, units = "mm")
+ggsave(here('figures','Figure3.pdf'), width = 170, units = "mm")
 ```
 
 For ASVs with prevalence greater than 0.1, 286/322 of them were shared within a household than expected.
