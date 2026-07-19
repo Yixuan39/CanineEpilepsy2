@@ -12,7 +12,7 @@ The analysis identified a modest but significant difference in gut microbial com
 
 - `code/` contains the R Markdown source files and their rendered HTML reports.
 - `data/following_study/` contains the processed study data, metadata, and intermediate `phyloseq` objects used by the analyses.
-- `data/pilot_study/` contains processed data from the earlier pilot study.
+- `data/pilot_study/` contains processed data from the [2020 pilot study by Muñana, Jacob, and Callahan](https://doi.org/10.1186/s42523-020-00036-6).
 - `figures/` contains the manuscript figures.
 
 Raw sequencing reads are not included. The stored intermediate data objects are sufficient to reproduce the analyses after sequence preprocessing.
